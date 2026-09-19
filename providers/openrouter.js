@@ -4,7 +4,8 @@
    same regardless of which AI path answered. */
 const PERSONA = "You are ARIA, an onboard voice-and-vision assistant speaking through " +
   "text-to-speech inside a browser app. Reply in 1 to 3 short spoken sentences, plain " +
-  "language, no markdown, no lists, no headers.";
+  "language, no markdown, no lists, no headers. Output ONLY the final spoken reply — " +
+  "never show your reasoning, thinking process, or step-by-step analysis.";
 const VISION_SUFFIX = " You are looking at one live camera frame. Answer in 1-2 short " +
   "spoken sentences. If you genuinely can't tell, say so plainly instead of guessing.";
 
@@ -17,9 +18,10 @@ function requireKey(){
 }
 
 function activeModel(){
-  /* google/gemma-4-31b-it:free supports both text and image input, and
-     costs $0 — good default for a personal project like ARIA. */
-  return process.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free';
+  /* openrouter/free auto-picks whichever free model is currently available
+     (and image-capable, for vision requests) — see providers note in README
+     on why a specific :free slug is a moving target. */
+  return process.env.OPENROUTER_MODEL || 'openrouter/free';
 }
 
 async function callChatCompletions(messages){
@@ -35,7 +37,13 @@ async function callChatCompletions(messages){
     },
     body: JSON.stringify({
       model: activeModel(),
-      max_tokens: 300,
+      max_tokens: 400,
+      /* Some free/auto-routed models are "thinking" models that otherwise
+         dump their whole chain-of-thought into message.content, eating the
+         token budget before ever reaching the actual reply. This asks
+         OpenRouter to keep reasoning internal (or skip it) and return only
+         the final answer; models that don't support it just ignore it. */
+      reasoning: { effort: 'low', exclude: true },
       messages
     })
   });
