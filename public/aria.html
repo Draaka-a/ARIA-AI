@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ARIA — Onboard Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-0:#03050a;
+    --bg-1:#070c16;
+    --bg-2:#0c1524;
+    --line:rgba(120,196,255,0.16);
+    --line-strong:rgba(120,196,255,0.32);
+    --ink:#e9f5ff;
+    --ink-dim:#7f93ab;
+    --ink-faint:#4b5b70;
+    --cyan:79,216,255;
+    --cyan-solid:#4fd8ff;
+    --amber:255,177,79;
+    --amber-solid:#ffb14f;
+    --rose:255,84,112;
+    --rose-solid:#ff5470;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--bg-0);
+    color:var(--ink);
+    font-family:"Sora",system-ui,sans-serif;
+    overflow:hidden;
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;
+  }
+  #app{
+    position:relative;
+    height:100dvh;
+    width:100vw;
+    display:flex;
+    flex-direction:column;
+    background:
+      radial-gradient(ellipse at 50% 18%, rgba(79,216,255,0.09), transparent 55%),
+      radial-gradient(ellipse at 50% 100%, rgba(79,216,255,0.05), transparent 60%),
+      linear-gradient(180deg,var(--bg-0),var(--bg-1) 55%,var(--bg-2));
+  }
+
+  /* ---------- HUD ---------- */
+  .hud{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 18px;
+    font-family:"JetBrains Mono",monospace;
+    font-size:11px;
+    letter-spacing:.06em;
+    color:var(--ink-dim);
+    z-index:20;
+    flex:0 0 auto;
+  }
+  .hud-top{border-bottom:1px solid var(--line);}
+  .hud-bottom{border-top:1px solid var(--line);}
+  .hud-cluster{display:flex;align-items:center;gap:8px;}
+  .hud-mode{
+    color:var(--ink);
+    font-size:12px;
+    font-weight:600;
+    letter-spacing:.14em;
+    padding:4px 14px;
+    border:1px solid var(--line-strong);
+    border-radius:999px;
+    background:rgba(79,216,255,0.06);
+    transition:color .3s, border-color .3s, background .3s;
+  }
+  .hud-dot{
+    width:7px;height:7px;border-radius:50%;
+    background:var(--ink-faint);
+    box-shadow:0 0 0 rgba(0,0,0,0);
+    transition:background .25s, box-shadow .25s;
+  }
+  .hud-dot.ok, .hud-dot.on{background:var(--cyan-solid);box-shadow:0 0 8px var(--cyan-solid);}
+  .hud-dot.bad{background:var(--rose-solid);box-shadow:0 0 8px var(--rose-solid);}
+  .hud-dot.busy{background:var(--amber-solid);box-shadow:0 0 8px var(--amber-solid);animation:blink 1s infinite;}
+  @keyframes blink{50%{opacity:.3;}}
+  body[data-state="ERROR"] .hud-mode{color:var(--rose-solid);border-color:rgba(255,84,112,0.45);background:rgba(255,84,112,0.08);}
+  body[data-state="THINKING"] .hud-mode{color:var(--amber-solid);border-color:rgba(255,177,79,0.45);}
+  body[data-state="VISION_ANALYSIS"] .hud-mode,
+  body[data-state="LISTENING"] .hud-mode,
+  body[data-state="SPEAKING"] .hud-mode{color:var(--cyan-solid);}
+
+  /* ---------- Stage ---------- */
+  .stage{
+    position:relative;
+    flex:1 1 auto;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    min-height:0;
+    touch-action:none;
+    overflow:hidden;
+  }
+  #orb-canvas{position:relative;z-index:5;pointer-events:none;}
+  #hint{
+    position:absolute;
+    z-index:6;
+    top:60%;
+    left:50%;
+    transform:translate(-50%,0);
+    font-size:12.5px;
+    color:var(--ink-dim);
+    text-align:center;
+    line-height:1.6;
+    max-width:280px;
+    transition:opacity .5s;
+    pointer-events:none;
+  }
+  #cam-video, #cam-overlay{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    opacity:0;
+    z-index:2;
+    transition:opacity .35s;
+    pointer-events:none;
+  }
+  #cam-video.visible, #cam-overlay.visible{opacity:1;pointer-events:auto;}
+  #cam-video{background:#000;transform-origin:center center;}
+  #cam-overlay{z-index:3;}
+
+  .reticle{position:absolute;inset:8%;z-index:4;pointer-events:none;}
+  .reticle .corner{
+    position:absolute;width:26px;height:26px;
+    border:2px solid rgba(var(--cyan),0.85);
+  }
+  .reticle .tl{top:0;left:0;border-right:none;border-bottom:none;}
+  .reticle .tr{top:0;right:0;border-left:none;border-bottom:none;}
+  .reticle .bl{bottom:0;left:0;border-right:none;border-top:none;}
+  .reticle .br{bottom:0;right:0;border-left:none;border-top:none;}
+  .reticle::after{
+    content:"ANALYZING";
+    position:absolute;top:-28px;left:0;
+    font-family:"JetBrains Mono",monospace;
+    font-size:10px;letter-spacing:.16em;
+    color:rgba(var(--cyan),0.9);
+    animation:pulseText 1.4s infinite;
+  }
+  @keyframes pulseText{50%{opacity:.35;}}
+
+  .tap-mark{
+    position:absolute;z-index:7;width:34px;height:34px;
+    border:1.5px solid var(--cyan-solid);border-radius:50%;
+    transform:translate(-50%,-50%) scale(0.5);
+    opacity:0;pointer-events:none;
+  }
+  .tap-mark.show{animation:tapPop .5s ease-out forwards;}
+  @keyframes tapPop{0%{opacity:.9;transform:translate(-50%,-50%) scale(0.4);}100%{opacity:0;transform:translate(-50%,-50%) scale(1.4);}}
+
+  /* ---------- Transcript ---------- */
+  .transcript-wrap{
+    position:absolute;
+    left:0;right:0;bottom:150px;
+    z-index:8;
+    display:flex;justify-content:center;
+    pointer-events:none;
+  }
+  #transcript{
+    max-width:560px;width:92%;
+    max-height:34vh;
+    overflow:hidden;
+    display:flex;flex-direction:column;
+    gap:6px;
+    mask-image:linear-gradient(to bottom, transparent, black 30%);
+    -webkit-mask-image:linear-gradient(to bottom, transparent, black 30%);
+  }
+  #transcript .line{
+    font-size:13.5px;line-height:1.5;
+    padding:7px 13px;border-radius:10px;
+    background:rgba(9,16,28,0.55);
+    border:1px solid var(--line);
+    backdrop-filter:blur(6px);
+    animation:lineIn .28s ease-out;
+    color:var(--ink);
+  }
+  #transcript .line.user{color:var(--cyan-solid);border-color:rgba(79,216,255,0.3);align-self:flex-end;}
+  #transcript .line.ai{color:var(--ink);}
+  @keyframes lineIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+  #interim{
+    text-align:center;font-size:12.5px;color:var(--ink-dim);font-style:italic;
+    min-height:18px;margin-top:2px;
+  }
+
+  /* ---------- Banner ---------- */
+  #banner{
+    position:absolute;left:50%;top:70px;transform:translateX(-50%);
+    z-index:30;max-width:min(92%,480px);
+    background:rgba(255,84,112,0.12);
+    border:1px solid rgba(255,84,112,0.45);
+    color:#ffd7dd;
+    padding:10px 16px;border-radius:10px;
+    font-size:13px;line-height:1.4;text-align:center;
+  }
+
+  /* ---------- Controls ---------- */
+  .cam-controls{
+    position:absolute;z-index:9;
+    left:0;right:0;bottom:150px;
+    display:flex;justify-content:center;gap:10px;
+    opacity:0;pointer-events:none;transition:opacity .3s;
+  }
+  .cam-controls.show{opacity:1;pointer-events:auto;}
+  .chip{
+    display:flex;align-items:center;gap:6px;
+    font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.05em;
+    padding:7px 11px;border-radius:999px;
+    background:rgba(9,16,28,0.65);
+    border:1px solid var(--line);color:var(--ink-dim);
+    backdrop-filter:blur(6px);
+  }
+  .chip svg{width:14px;height:14px;}
+  .icon-btn.small{width:34px;height:34px;}
+
+  footer.controls{
+    flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;
+    gap:16px;
+    padding:18px 16px calc(18px + env(safe-area-inset-bottom));
+    z-index:20;
+    border-top:1px solid var(--line);
+    background:rgba(4,7,13,0.4);
+  }
+  .icon-btn{
+    width:54px;height:54px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(79,216,255,0.06);
+    border:1px solid var(--line-strong);
+    color:var(--ink);
+    cursor:pointer;
+    transition:background .2s, transform .15s, border-color .2s, color .2s;
+  }
+  .icon-btn svg{width:22px;height:22px;stroke:currentColor;fill:none;}
+  .icon-btn:active{transform:scale(0.92);}
+  .icon-btn.primary{width:64px;height:64px;background:rgba(79,216,255,0.1);}
+  .icon-btn.active{background:var(--cyan-solid);border-color:var(--cyan-solid);color:#03121a;}
+  .icon-btn.active svg{stroke:#03121a;}
+  .icon-btn:disabled{opacity:.35;cursor:not-allowed;}
+
+  /* ---------- Text input fallback ---------- */
+  #text-form{
+    position:absolute;left:0;right:0;bottom:96px;
+    z-index:25;
+    display:flex;gap:8px;
+    justify-content:center;
+    padding:0 16px;
+  }
+  #text-form[hidden]{display:none;}
+  #text-input{
+    flex:1;max-width:460px;
+    background:rgba(9,16,28,0.85);
+    border:1px solid var(--line-strong);
+    border-radius:999px;
+    padding:11px 18px;
+    color:var(--ink);font-family:"Sora",sans-serif;font-size:14px;
+    outline:none;
+  }
+  #text-input:focus{border-color:var(--cyan-solid);}
+  #text-form button{
+    background:var(--cyan-solid);border:none;border-radius:999px;
+    padding:0 18px;font-family:"Sora",sans-serif;font-weight:600;
+    color:#03121a;cursor:pointer;
+  }
+
+  ::selection{background:rgba(79,216,255,0.3);}
+
+  @media (max-width:480px){
+    .hud{font-size:10px;padding:12px 12px;}
+    .icon-btn{width:50px;height:50px;}
+    .icon-btn.primary{width:60px;height:60px;}
+    #transcript{width:96%;}
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .line, .reticle::after, .hud-dot.busy{animation-duration:.01ms !important;}
+  }
+</style>
+</head>
+<body data-state="IDLE">
+<div id="app">
+
+  <header class="hud hud-top">
+    <div class="hud-cluster">
+      <span class="hud-dot ok" id="dot-conn"></span>
+      <span id="lbl-conn">ONLINE</span>
+    </div>
+    <div class="hud-cluster"><span class="hud-mode" id="lbl-mode">IDLE</span></div>
+    <div class="hud-cluster"><span id="lbl-clock">00:00:00</span></div>
+  </header>
+
+  <main class="stage" id="stage">
+    <canvas id="orb-canvas"></canvas>
+    <div id="hint">Tap the mic to talk, or say &ldquo;open the camera.&rdquo;<br>You can also type below.</div>
+
+    <video id="cam-video" playsinline autoplay muted></video>
+    <canvas id="cam-overlay"></canvas>
+    <div class="reticle" id="reticle" hidden>
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+    </div>
+
+    <div id="banner" hidden></div>
+  </main>
+
+  <div class="transcript-wrap">
+    <div style="display:flex;flex-direction:column;width:100%;align-items:center;">
+      <div id="transcript"></div>
+      <div id="interim"></div>
+    </div>
+  </div>
+
+  <div class="cam-controls" id="cam-controls">
+    <button class="chip" id="btn-switch-cam" title="Switch camera">
+      <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M4 7h4l1-2h6l1 2h4v12H4z"/><path d="M17 4l2 2-2 2" stroke-width="1.4"/><circle cx="12" cy="14" r="3.2"/></svg>
+      SWITCH
+    </button>
+    <button class="chip" id="btn-hand" title="Toggle camera hand-tracking (experimental)">
+      <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" fill="none"><path d="M8 13V6.5a1.5 1.5 0 0 1 3 0V12M11 12V5a1.5 1.5 0 0 1 3 0v7M14 12V6.5a1.5 1.5 0 0 1 3 0V13M17 12v2a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5v-2c0-1 .6-1.7 1.5-2"/></svg>
+      <span id="gesture-mode">TOUCH</span>
+    </button>
+    <button class="chip" id="btn-snap" title="Take snapshot">
+      <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.4"/></svg>
+      SNAP
+    </button>
+    <span class="chip" id="zoom-lbl">1.00x</span>
+  </div>
+
+  <form id="text-form" hidden autocomplete="off">
+    <input id="text-input" type="text" placeholder="Type a command or question…" />
+    <button type="submit">Send</button>
+  </form>
+
+  <footer class="controls">
+    <button class="icon-btn" id="btn-keyboard" title="Type instead">
+      <svg viewBox="0 0 24 24" stroke-width="1.7"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M7 14h10" stroke-linecap="round"/></svg>
+    </button>
+    <button class="icon-btn primary" id="btn-mic" title="Toggle microphone" aria-pressed="false">
+      <svg viewBox="0 0 24 24" stroke-width="1.7"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke-linecap="round"/></svg>
+    </button>
+    <button class="icon-btn" id="btn-cam" title="Toggle camera" aria-pressed="false">
+      <svg viewBox="0 0 24 24" stroke-width="1.7"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.4"/></svg>
+    </button>
+  </footer>
+
+  <footer class="hud hud-bottom">
+    <div class="hud-cluster"><span class="hud-dot" id="dot-mic"></span>MIC</div>
+    <div class="hud-cluster"><span class="hud-dot" id="dot-cam"></span>CAM</div>
+    <div class="hud-cluster"><span class="hud-dot" id="dot-ai"></span>AI</div>
+    <div class="hud-cluster" id="lbl-ai-status">LOCAL MODE</div>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ============================================================
+   DOM references
+   ============================================================ */
+const $ = (id) => document.getElementById(id);
+const orbCanvas = $('orb-canvas'), orbCtx = orbCanvas.getContext('2d');
+const stage = $('stage');
+const camVideo = $('cam-video'), camOverlay = $('cam-overlay'), camCtx = camOverlay.getContext('2d');
+const reticle = $('reticle');
+const hintEl = $('hint');
+const bannerEl = $('banner');
+const transcriptEl = $('transcript'), interimEl = $('interim');
+const lblMode = $('lbl-mode'), lblClock = $('lbl-clock'), lblConn = $('lbl-conn');
+const dotConn = $('dot-conn'), dotMic = $('dot-mic'), dotCam = $('dot-cam'), dotAi = $('dot-ai');
+const lblAiStatus = $('lbl-ai-status');
+const btnMic = $('btn-mic'), btnCam = $('btn-cam'), btnKeyboard = $('btn-keyboard');
+const camControls = $('cam-controls');
+const btnSwitchCam = $('btn-switch-cam'), btnSnap = $('btn-snap'), btnHand = $('btn-hand');
+const gestureLbl = $('gesture-mode'), zoomLbl = $('zoom-lbl');
+const textForm = $('text-form'), textInput = $('text-input');
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ============================================================
+   Central application state machine
+   ============================================================ */
+const State = { current: 'IDLE' };
+function restState(){
+  if (micOn) return 'LISTENING';
+  if (camOn) return 'CAMERA';
+  return 'IDLE';
+}
+function setState(next, opts){
+  opts = opts || {};
+  State.current = next;
+  document.body.dataset.state = next;
+  lblMode.textContent = next.replace('_',' ');
+  reticle.hidden = next !== 'VISION_ANALYSIS';
+  if (next === 'ERROR') showBanner(opts.message || 'Something went wrong.');
+  else hideBanner();
+}
+
+let bannerTimer = null;
+function showBanner(msg, sticky){
+  bannerEl.textContent = msg;
+  bannerEl.hidden = false;
+  clearTimeout(bannerTimer);
+  if (!sticky) bannerTimer = setTimeout(hideBanner, 6000);
+}
+function hideBanner(){ bannerEl.hidden = true; }
+
+function addTranscript(who, text){
+  hintEl.style.opacity = '0';
+  const line = document.createElement('div');
+  line.className = 'line ' + who;
+  line.textContent = text;
+  transcriptEl.appendChild(line);
+  while (transcriptEl.children.length > 30) transcriptEl.removeChild(transcriptEl.firstChild);
+}
+
+/* clock + connection */
+function tickClock(){ lblClock.textContent = new Date().toLocaleTimeString('en-GB',{hour12:false}); }
+setInterval(tickClock, 1000); tickClock();
+function updateConn(){
+  const online = navigator.onLine;
+  dotConn.classList.toggle('ok', online);
+  dotConn.classList.toggle('bad', !online);
+  lblConn.textContent = online ? 'ONLINE' : 'OFFLINE';
+}
+window.addEventListener('online', updateConn);
+window.addEventListener('offline', updateConn);
+updateConn();
+
+/* ============================================================
+   AI service — layered provider abstraction:
+     1) window.claude "sample" capability — only present when this page
+        is loaded inside a Claude.ai Artifact viewer
+     2) a same-origin backend proxy at /api/chat and /api/vision, for
+        standalone deployments (see server.js + README) — the proxy
+        holds the real API key server-side, never in this file
+     3) a local, rule-based reply, so the app still runs without either
+        backend connected, just without real reasoning
+   ============================================================ */
+let aiSample = null, aiLimits = null, backendAvailable = null;
+async function initAI(){
+  try {
+    if (window.claude && window.claude.use) {
+      aiSample = await window.claude.use('sample');
+      if (aiSample) { try { aiLimits = await aiSample.limits(); } catch(_e){ aiLimits = null; } }
+    }
+  } catch(_e){ aiSample = null; }
+  if (aiSample){ lblAiStatus.textContent = 'AI LINKED'; return; }
+  lblAiStatus.textContent = 'LOCAL MODE';
+  /* not running inside a Claude.ai Artifact — see if a local backend
+     proxy (server.js) is reachable on this same origin instead */
+  try {
+    const res = await fetch('/api/health');
+    if (res.ok){ backendAvailable = true; lblAiStatus.textContent = 'AI LINKED'; }
+  } catch(_e){ /* no local backend either — stays LOCAL MODE */ }
+}
+initAI();
+
+let downloadsCap = null;
+(async function initDownloads(){
+  try { if (window.claude && window.claude.use) downloadsCap = await window.claude.use('downloads'); }
+  catch(_e){ downloadsCap = null; }
+})();
+
+const PERSONA = "You are ARIA, an onboard voice-and-vision assistant speaking through text-to-speech inside a browser app. Reply in 1 to 3 short spoken sentences, plain language, no markdown, no lists, no headers.";
+let chatHistory = [];
+function trimHistory(){ while (chatHistory.length > 12) chatHistory.shift(); }
+
+function setAiBusy(on){ dotAi.classList.toggle('busy', !!on); }
+
+function aiErrorMessage(e){
+  const code = e && e.code;
+  const map = {
+    not_granted: "I need permission to reason out loud — allow AI access if you'd like real answers.",
+    rate_limited: "I'm a little overloaded right now — try again in a moment.",
+    refused: "I can't help with that one.",
+    images_unavailable: "I can't examine images in this session, only hear and speak.",
+    image_rejected: "That frame didn't come through cleanly — try again.",
+    sampling_disabled: "My reasoning engine isn't available for this session.",
+    not_declared: "My reasoning engine isn't available for this session.",
+    capability_disabled: "My reasoning engine isn't available for this session.",
+    capability_removed: "My reasoning engine isn't available for this session.",
+    empty_completion: "I didn't come up with anything — try rephrasing.",
+    session_expired: "You'll need to sign in again for me to keep reasoning.",
+    invalid_json: "I got a malformed answer back — try again.",
+  };
+  return map[code] || "I hit a snag reaching my reasoning engine. Try again shortly.";
+}
+
+/* Backend proxy calls — used only when the platform "sample" capability
+   isn't present. Talks to the same-origin server in server.js, which is
+   the only place the real API key ever lives. Returns null on any
+   failure so the caller can fall back further, rather than throwing. */
+async function backendChat(userText){
+  try {
+    const res = await fetch('/api/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message:userText, history:chatHistory})
+    });
+    if (!res.ok) throw new Error('bad status');
+    const data = await res.json();
+    backendAvailable = true; lblAiStatus.textContent = 'AI LINKED';
+    return data.text || null;
+  } catch(_e){ return null; }
+}
+async function backendVision(blob, question){
+  try {
+    const form = new FormData();
+    form.append('image', blob, 'frame.jpg');
+    form.append('question', question);
+    const res = await fetch('/api/vision', {method:'POST', body:form});
+    if (!res.ok) throw new Error('bad status');
+    const data = await res.json();
+    backendAvailable = true; lblAiStatus.textContent = 'AI LINKED';
+    return data.text || null;
+  } catch(_e){ return null; }
+}
+
+const AIService = {
+  async chat(userText){
+    if (aiSample){
+      setAiBusy(true);
+      const turns = [{role:'user', content: PERSONA}].concat(chatHistory, [{role:'user', content:userText}]);
+      try {
+        const res = await aiSample(turns, {modelTier:'quick', cache:false});
+        chatHistory.push({role:'user', content:userText}, {role:'assistant', content:res.text});
+        trimHistory();
+        return res.text;
+      } catch(e){ return aiErrorMessage(e); }
+      finally { setAiBusy(false); }
+    }
+    if (backendAvailable !== false){
+      setAiBusy(true);
+      const text = await backendChat(userText);
+      setAiBusy(false);
+      if (text){
+        chatHistory.push({role:'user', content:userText}, {role:'assistant', content:text});
+        trimHistory();
+        return text;
+      }
+      backendAvailable = false;
+    }
+    return "I heard: \u201c" + userText + "\u201d. My reasoning engine isn't connected in this session, so I can only run direct commands — try camera, zoom, or snapshot.";
+  },
+  async analyzeImage(blob, question){
+    if (aiSample && aiLimits && aiLimits.images){
+      setAiBusy(true);
+      const prompt = PERSONA + " You are looking at one live camera frame. " + question +
+        " Answer in 1-2 short spoken sentences. If you genuinely can't tell, say so plainly instead of guessing.";
+      try {
+        const res = await aiSample(prompt, {images: blob, modelTier:'quick', cache:false});
+        return res.text;
+      } catch(e){ return aiErrorMessage(e); }
+      finally { setAiBusy(false); }
+    }
+    if (backendAvailable !== false){
+      setAiBusy(true);
+      const text = await backendVision(blob, question);
+      setAiBusy(false);
+      if (text) return text;
+      backendAvailable = false;
+    }
+    return "Vision analysis isn't available in this session — I can still hear and speak.";
+  }
+};
+
+/* ============================================================
+   Natural-language intent / action layer
+   ============================================================ */
+const INTENTS = [
+  {re:/\b(open|start|turn on|activate)\b.*\bcamera\b|\blook at this\b|\bcheck this out\b/i, action:'CAMERA_ON'},
+  {re:/\b(close|turn off)\b.*\bcamera\b|\bgo back\b/i, action:'CAMERA_OFF'},
+  {re:/\bswitch\b.*\bcamera\b|\bother camera\b|\bflip camera\b|\bfront camera\b|\bback camera\b/i, action:'CAMERA_SWITCH'},
+  {re:/\bzoom in\b|\bcloser look\b|\bget closer\b|\btake a closer look\b/i, action:'ZOOM_IN'},
+  {re:/\bzoom out\b|\bstep back\b|\bzoom back\b/i, action:'ZOOM_OUT'},
+  {re:/\b(take|grab)\b.*\b(snapshot|screenshot|photo|picture)\b|\bsnapshot\b/i, action:'SNAPSHOT'},
+  {re:/\bstop listening\b/i, action:'MIC_OFF'},
+  {re:/\bstop speaking\b|\bbe quiet\b|\bsilence\b/i, action:'STOP_SPEAK'},
+  {re:/^\s*stop\s*$/i, action:'STOP_ALL'},
+];
+function matchIntent(text){
+  for (const i of INTENTS) if (i.re.test(text)) return i.action;
+  return null;
+}
+async function runAction(action){
+  switch(action){
+    case 'CAMERA_ON': await startCamera(); break;
+    case 'CAMERA_OFF': stopCamera(); break;
+    case 'CAMERA_SWITCH': await switchCamera(); break;
+    case 'ZOOM_IN': nudgeZoom(0.3); break;
+    case 'ZOOM_OUT': nudgeZoom(-0.3); break;
+    case 'SNAPSHOT': await takeSnapshot(); break;
+    case 'MIC_OFF': stopMic(); break;
+    case 'STOP_SPEAK': stopSpeaking(); setState(restState()); break;
+    case 'STOP_ALL': stopSpeaking(); stopMic(); break;
+  }
+}
+
+async function handleUtterance(rawText){
+  const text = (rawText || '').trim();
+  if (!text) return;
+  addTranscript('user', text);
+  const action = matchIntent(text);
+  if (action){
+    await runAction(action);
+    return;
+  }
+  setState('THINKING');
+  let reply;
+  if (camOn){
+    setState('VISION_ANALYSIS');
+    const blob = await grabFrame();
+    reply = await AIService.analyzeImage(blob, text);
+  } else {
+    reply = await AIService.chat(text);
+  }
+  addTranscript('ai', reply);
+  speak(reply);
+}
+
+/* ============================================================
+   Voice: speech recognition (STT)
+   ============================================================ */
+const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null, micOn = false, continuousMode = false, recognitionActive = false, heardTimer = null;
+let micStream = null, micCtx = null, micAnalyser = null, micData = null;
+
+function armHeardWatchdog(){
+  clearTimeout(heardTimer);
+  heardTimer = setTimeout(() => {
+    if (micOn) showBanner("Still listening, but nothing has come through yet — check the mic permission (site settings) and your network connection.");
+  }, 9000);
+}
+
+function initRecognition(){
+  if (!SpeechRecognitionImpl) return null;
+  const r = new SpeechRecognitionImpl();
+  r.lang = 'en-US';
+  r.continuous = true;
+  r.interimResults = true;
+  r.onstart = () => { recognitionActive = true; armHeardWatchdog(); };
+  r.onresult = (ev) => {
+    clearTimeout(heardTimer);
+    let interim = '', final = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++){
+      const t = ev.results[i][0].transcript;
+      if (ev.results[i].isFinal) final += t; else interim += t;
+    }
+    interimEl.textContent = interim;
+    if (final.trim()){
+      interimEl.textContent = '';
+      handleUtterance(final);
+    } else {
+      armHeardWatchdog();
+    }
+  };
+  r.onerror = (ev) => {
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
+      micOn = false; continuousMode = false; recognitionActive = false;
+      setState('ERROR', {message:"Microphone access was denied. Allow it in the browser's site settings to talk to ARIA."});
+      updateMicUI();
+    } else if (ev.error === 'no-speech' || ev.error === 'aborted'){
+      /* benign — onend decides whether to restart */
+    } else if (ev.error === 'network'){
+      setState('ERROR', {message:'Speech recognition needs network access to reach the recognition service.'});
+    } else {
+      setState('ERROR', {message:'Speech recognition hit a problem (' + ev.error + ').'});
+    }
+  };
+  r.onend = () => {
+    recognitionActive = false;
+    if (micOn && continuousMode){
+      /* small delay avoids the InvalidStateError some mobile browsers throw
+         when start() is called again in the same tick as onend */
+      setTimeout(() => { if (micOn && continuousMode && !recognitionActive){ try { r.start(); } catch(_e){} } }, 200);
+    } else if (State.current === 'LISTENING') setState(restState());
+  };
+  return r;
+}
+
+async function startMic(){
+  if (!SpeechRecognitionImpl){
+    setState('ERROR', {message:"This browser doesn't support speech recognition — use the keyboard instead."});
+    textForm.hidden = false;
+    return;
+  }
+  if (micOn) return;
+  if (!recognition) recognition = initRecognition();
+  micOn = true; continuousMode = true;
+  try {
+    recognition.start();
+  } catch(_e){
+    micOn = false; continuousMode = false;
+    setState('ERROR', {message:'Could not start speech recognition — try again.'});
+    updateMicUI();
+    return;
+  }
+  setState('LISTENING');
+  updateMicUI();
+  /* Best-effort only: a separate raw stream purely to drive the orb's
+     amplitude visualization. This is NOT required for recognition itself
+     (SpeechRecognition manages its own mic access), so its failure must
+     never block or undo the mic toggle above — that coupling was the
+     original bug where a denied/insecure-context getUserMedia call
+     silently prevented recognition.start() from ever running. */
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    setupAnalyser(micStream);
+  } catch(_e){ /* orb falls back to a generic listening pulse; STT still works */ }
+}
+function stopMic(){
+  micOn = false; continuousMode = false;
+  clearTimeout(heardTimer);
+  if (recognition){ try { recognition.stop(); } catch(_e){} }
+  if (micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream = null; }
+  teardownAnalyser();
+  updateMicUI();
+  if (State.current === 'LISTENING') setState(restState());
+}
+function updateMicUI(){
+  dotMic.classList.toggle('on', micOn);
+  btnMic.classList.toggle('active', micOn);
+  btnMic.setAttribute('aria-pressed', String(micOn));
+}
+
+function setupAnalyser(stream){
+  try {
+    micCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const src = micCtx.createMediaStreamSource(stream);
+    micAnalyser = micCtx.createAnalyser();
+    micAnalyser.fftSize = 256;
+    micData = new Uint8Array(micAnalyser.frequencyBinCount);
+    src.connect(micAnalyser);
+  } catch(_e){ micAnalyser = null; }
+}
+function teardownAnalyser(){
+  if (micCtx){ micCtx.close().catch(()=>{}); }
+  micCtx = null; micAnalyser = null; micData = null;
+}
+function sampleMicLevel(){
+  if (!micAnalyser) return 0;
+  micAnalyser.getByteFrequencyData(micData);
+  let sum = 0; for (let i=0;i<micData.length;i++) sum += micData[i];
+  return Math.min(1, (sum/micData.length)/110);
+}
+
+/* ============================================================
+   Voice: text-to-speech (TTS)
+   ============================================================ */
+let speakPulse = 0;
+function speak(text){
+  if (!('speechSynthesis' in window)){ return; }
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.02;
+  u.onboundary = () => { speakPulse = 1; };
+  u.onstart = () => { setState('SPEAKING'); };
+  u.onend = () => { setState(restState()); };
+  u.onerror = () => { setState(restState()); };
+  window.speechSynthesis.speak(u);
+}
+function stopSpeaking(){ window.speechSynthesis.cancel(); }
+
+/* interrupt speech whenever the user starts talking or typing */
+function interruptIfSpeaking(){ if (window.speechSynthesis.speaking) window.speechSynthesis.cancel(); }
+
+/* ============================================================
+   Camera
+   ============================================================ */
+let currentStream = null, camOn = false, devices = [], deviceIndex = 0;
+
+async function listCameras(){
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    devices = all.filter(d => d.kind === 'videoinput');
+  } catch(_e){ devices = []; }
+}
+
+async function startCamera(){
+  interruptIfSpeaking();
+  try {
+    currentStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+  } catch(_e){
+    setState('ERROR', {message:'Camera permission was denied or no camera is available.'});
+    return;
+  }
+  camVideo.srcObject = currentStream;
+  try { await camVideo.play(); } catch(_e){}
+  await listCameras();
+  const activeId = currentStream.getVideoTracks()[0].getSettings().deviceId;
+  deviceIndex = Math.max(0, devices.findIndex(d => d.deviceId === activeId));
+  setCamVisible(true);
+  resetZoom();
+  setState(restState());
+  addTranscript('ai', 'Camera online.');
+}
+function stopCamera(){
+  disableHandTracking();
+  if (currentStream){ currentStream.getTracks().forEach(t=>t.stop()); currentStream = null; }
+  camVideo.srcObject = null;
+  setCamVisible(false);
+  setState(restState());
+}
+async function switchCamera(){
+  if (devices.length < 2){ showBanner('Only one camera is available.'); return; }
+  deviceIndex = (deviceIndex + 1) % devices.length;
+  if (currentStream) currentStream.getTracks().forEach(t=>t.stop());
+  try {
+    currentStream = await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact: devices[deviceIndex].deviceId}}});
+    camVideo.srcObject = currentStream;
+    resetZoom();
+  } catch(_e){ setState('ERROR', {message:'Could not switch cameras.'}); }
+}
+function setCamVisible(on){
+  camOn = on;
+  camVideo.classList.toggle('visible', on);
+  camOverlay.classList.toggle('visible', on);
+  camControls.classList.toggle('show', on);
+  btnCam.classList.toggle('active', on);
+  btnCam.setAttribute('aria-pressed', String(on));
+  dotCam.classList.toggle('on', on);
+  if (on) sizeOverlay();
+}
+function sizeOverlay(){
+  const r = camVideo.getBoundingClientRect();
+  camOverlay.width = r.width; camOverlay.height = r.height;
+}
+window.addEventListener('resize', () => { if (camOn) sizeOverlay(); });
+
+async function grabFrame(){
+  const c = document.createElement('canvas');
+  c.width = camVideo.videoWidth || 640;
+  c.height = camVideo.videoHeight || 480;
+  c.getContext('2d').drawImage(camVideo, 0, 0, c.width, c.height);
+  return new Promise((resolve) => c.toBlob((b) => resolve(b), 'image/jpeg', 0.85));
+}
+
+async function takeSnapshot(){
+  if (!camOn){ showBanner('Open the camera first to take a snapshot.'); return; }
+  const blob = await grabFrame();
+  const filename = 'aria-snapshot-' + Date.now() + '.jpg';
+  if (downloadsCap){
+    try { await downloadsCap.save({filename, data: blob}); addTranscript('ai', 'Snapshot saved.'); }
+    catch(_e){ addTranscript('ai', "Couldn't save the snapshot."); }
+  } else {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    addTranscript('ai', 'Snapshot downloaded.');
+  }
+}
+
+/* ---- Gesture Zoom System (see §5 of the brief) ----
+   1. capture the starting distance/level
+   2. track continuously
+   3. compute the delta from start
+   4. convert delta -> a target zoom
+   5. smooth/interpolate toward the target
+   6. clamp to sane limits
+   7. lightly damp to reduce jitter                              */
+let zoomLevel = 1, smoothedZoom = 1;
+const ZOOM_MIN = 1, ZOOM_MAX = 4;
+let nativeZoomCap = null;
+
+function resetZoom(){
+  zoomLevel = 1; smoothedZoom = 1;
+  camVideo.style.transform = 'scale(1)';
+  nativeZoomCap = null;
+  const track = currentStream && currentStream.getVideoTracks()[0];
+  if (track && track.getCapabilities){
+    try {
+      const caps = track.getCapabilities();
+      if (caps.zoom) nativeZoomCap = {min:caps.zoom.min, max:caps.zoom.max, track};
+    } catch(_e){}
+  }
+  updateZoomLabel();
+}
+function applyZoom(target){
+  zoomLevel = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, target));
+  if (nativeZoomCap){
+    const t = nativeZoomCap;
+    const value = t.min + (zoomLevel - 1) / (ZOOM_MAX - 1) * (t.max - t.min);
+    t.track.applyConstraints({advanced:[{zoom:value}]}).catch(()=>{});
+  } else {
+    camVideo.style.transform = 'scale(' + zoomLevel.toFixed(3) + ')';
+  }
+  updateZoomLabel();
+}
+function nudgeZoom(delta){ smoothedZoom = zoomLevel; applyZoom(zoomLevel + delta); }
+function updateZoomLabel(){ zoomLbl.textContent = zoomLevel.toFixed(2) + 'x'; }
+
+/* touch pinch-to-zoom + wheel + swipe + tap/double-tap/long-press */
+let pinchStartDist = null, pinchStartZoom = 1;
+function touchDist(a,b){ return Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY); }
+
+let pressTimer = null, pressFired = false, touchStartX = 0, touchStartT = 0, lastTapT = 0;
+
+stage.addEventListener('touchstart', (e) => {
+  if (!camOn) return;
+  if (e.touches.length === 2){
+    pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+    pinchStartZoom = zoomLevel;
+    smoothedZoom = zoomLevel;
+  } else if (e.touches.length === 1){
+    touchStartX = e.touches[0].clientX;
+    touchStartT = Date.now();
+    pressFired = false;
+    pressTimer = setTimeout(() => {
+      pressFired = true;
+      pauseGesture();
+      markTap(e.touches[0].clientX, e.touches[0].clientY, true);
+    }, 650);
+  }
+}, {passive:true});
+
+stage.addEventListener('touchmove', (e) => {
+  if (!camOn) return;
+  if (e.touches.length === 2 && pinchStartDist){
+    const d = touchDist(e.touches[0], e.touches[1]);
+    const target = pinchStartZoom * (d / pinchStartDist);
+    smoothedZoom += (target - smoothedZoom) * 0.35; /* interpolation + stabilization */
+    applyZoom(smoothedZoom);
+  } else if (pressTimer){
+    clearTimeout(pressTimer);
+  }
+}, {passive:true});
+
+stage.addEventListener('touchend', (e) => {
+  if (e.touches.length < 2) pinchStartDist = null;
+  if (pressTimer){ clearTimeout(pressTimer); pressTimer = null; }
+  if (!camOn || pressFired) return;
+  if (touchStartX !== undefined && Date.now() - touchStartT < 500){
+    const changed = e.changedTouches[0];
+    const dx = changed.clientX - touchStartX;
+    if (Math.abs(dx) > 70){ /* swipe */
+      switchCamera();
+    } else {
+      const now = Date.now();
+      if (now - lastTapT < 320){ takeSnapshot(); }      /* double-tap = confirm */
+      else { markTap(changed.clientX, changed.clientY, false); } /* tap = point */
+      lastTapT = now;
+    }
+  }
+});
+stage.addEventListener('wheel', (e) => {
+  if (!camOn) return;
+  e.preventDefault();
+  nudgeZoom(e.deltaY < 0 ? 0.12 : -0.12);
+}, {passive:false});
+
+function markTap(x, y, isPause){
+  const m = document.createElement('div');
+  m.className = 'tap-mark';
+  m.style.left = x + 'px'; m.style.top = y + 'px';
+  m.style.borderColor = isPause ? 'var(--rose-solid)' : 'var(--cyan-solid)';
+  stage.appendChild(m);
+  requestAnimationFrame(()=>m.classList.add('show'));
+  setTimeout(()=>m.remove(), 550);
+}
+function pauseGesture(){ stopSpeaking(); showBanner('Paused.'); setState(restState()); }
+
+/* ============================================================
+   Hand tracking (experimental / best-effort — see §4 of the brief)
+   Falls back silently to the touch gestures above if the external
+   model cannot be reached from this session.
+   ============================================================ */
+let handTrackingActive = false, handsInstance = null, handPinchStart = null, handPinchZoomStart = 1;
+
+function loadScriptOnce(src){
+  return new Promise((resolve, reject) => {
+    if (document.querySelector('script[data-src="'+src+'"]')) return resolve();
+    const s = document.createElement('script');
+    s.src = src; s.dataset.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('load failed'));
+    document.head.appendChild(s);
+  });
+}
+
+btnHand.addEventListener('click', () => {
+  if (handTrackingActive) disableHandTracking();
+  else enableHandTracking();
+});
+
+async function enableHandTracking(){
+  if (!camOn){ showBanner('Turn the camera on first.'); return; }
+  gestureLbl.textContent = 'LOADING…';
+  let gotResult = false;
+  try {
+    const base = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/';
+    await loadScriptOnce(base + 'hands.js');
+    if (!window.Hands) throw new Error('Hands API unavailable');
+    const hands = new window.Hands({locateFile:(f)=> base + f});
+    hands.setOptions({maxNumHands:1, modelComplexity:0, minDetectionConfidence:0.6, minTrackingConfidence:0.5});
+    hands.onResults((res) => { gotResult = true; handleHandResults(res); });
+    handsInstance = hands;
+    handTrackingActive = true;
+    const loop = async () => {
+      if (!handTrackingActive) return;
+      try { await hands.send({image: camVideo}); } catch(_e){}
+      requestAnimationFrame(loop);
+    };
+    loop();
+    await new Promise(res => setTimeout(res, 4500));
+    if (!gotResult) throw new Error('no results');
+    gestureLbl.textContent = 'HAND TRACKING';
+    btnHand.classList.add('active');
+  } catch(_e){
+    handTrackingActive = false; handsInstance = null;
+    gestureLbl.textContent = 'TOUCH';
+    btnHand.classList.remove('active');
+    showBanner("Camera-based hand tracking isn't reachable in this session — touch gestures still work.");
+  }
+}
+function disableHandTracking(){
+  handTrackingActive = false; handsInstance = null;
+  gestureLbl.textContent = 'TOUCH';
+  btnHand.classList.remove('active');
+  handPinchStart = null;
+}
+function handleHandResults(res){
+  if (!camOn) return;
+  camCtx.clearRect(0,0,camOverlay.width, camOverlay.height);
+  if (res.multiHandLandmarks && res.multiHandLandmarks.length){
+    const lm = res.multiHandLandmarks[0];
+    camCtx.fillStyle = 'rgba(79,216,255,0.9)';
+    for (const p of lm){
+      camCtx.beginPath();
+      camCtx.arc(p.x*camOverlay.width, p.y*camOverlay.height, 3, 0, Math.PI*2);
+      camCtx.fill();
+    }
+    const thumb = lm[4], index = lm[8];
+    const d = Math.hypot((thumb.x-index.x)*camOverlay.width, (thumb.y-index.y)*camOverlay.height);
+    if (handPinchStart === null){ handPinchStart = d; handPinchZoomStart = zoomLevel; }
+    applyZoom(handPinchZoomStart * (d / handPinchStart));
+  } else {
+    handPinchStart = null;
+  }
+}
+
+/* ============================================================
+   Orb renderer — layered canvas animation for every app state
+   ============================================================ */
+function resizeOrb(){
+  const size = Math.min(stage.clientWidth, stage.clientHeight) * 0.82;
+  const dpr = window.devicePixelRatio || 1;
+  orbCanvas.width = size * dpr; orbCanvas.height = size * dpr;
+  orbCanvas.style.width = size + 'px'; orbCanvas.style.height = size + 'px';
+  orbCtx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize', resizeOrb);
+resizeOrb();
+
+let idlePhase = 0, ringAngle = 0, errorShake = 0;
+const motionScale = reducedMotion ? 0.35 : 1;
+
+function renderOrb(){
+  requestAnimationFrame(renderOrb);
+  const w = orbCanvas.clientWidth, h = orbCanvas.clientHeight;
+  if (!w || !h) return;
+  const cx = w/2, cy = h/2, R = Math.min(w,h)/2;
+  orbCtx.clearRect(0,0,w,h);
+
+  idlePhase += 0.018 * motionScale;
+  const st = State.current;
+  let amp = 0.5 + Math.sin(idlePhase) * 0.05 * motionScale;
+  let color = '79,216,255';
+  let ringSpeed = 0.35;
+
+  if (st === 'LISTENING'){ amp = 0.55 + sampleMicLevel() * 0.35; ringSpeed = 0.5; }
+  else if (st === 'THINKING'){ color = '255,177,79'; ringSpeed = 1.6; amp = 0.55 + Math.sin(idlePhase*2)*0.03; }
+  else if (st === 'SPEAKING'){ speakPulse *= 0.9; amp = 0.55 + speakPulse*0.32 + Math.sin(idlePhase*3)*0.02; }
+  else if (st === 'VISION_ANALYSIS'){ color = '124,240,255'; amp = 0.55 + Math.sin(idlePhase*1.4)*0.05; ringSpeed = 0.8; }
+  else if (st === 'ERROR'){ color = '255,84,112'; errorShake = Math.min(1, errorShake + 0.12); }
+  if (st !== 'ERROR') errorShake *= 0.86;
+
+  const shakeMag = errorShake * 6 * motionScale;
+  const sx = (Math.random()-0.5) * shakeMag, sy = (Math.random()-0.5) * shakeMag;
+
+  orbCtx.save();
+  orbCtx.translate(cx + sx, cy + sy);
+
+  /* outer glow */
+  const glowR = R * (0.95 + amp*0.55);
+  const glow = orbCtx.createRadialGradient(0,0, R*0.15, 0,0, glowR);
+  glow.addColorStop(0, 'rgba('+color+',0.30)');
+  glow.addColorStop(1, 'rgba('+color+',0)');
+  orbCtx.fillStyle = glow;
+  orbCtx.beginPath(); orbCtx.arc(0,0,glowR,0,Math.PI*2); orbCtx.fill();
+
+  /* energy ring(s) */
+  ringAngle += 0.01 * ringSpeed * motionScale;
+  orbCtx.lineWidth = 1.6;
+  for (let i=0;i<3;i++){
+    orbCtx.strokeStyle = 'rgba('+color+','+(0.55 - i*0.12)+')';
+    orbCtx.beginPath();
+    const dir = i % 2 ? 1 : -1;
+    orbCtx.arc(0,0, R*0.8 - i*11, ringAngle*dir + i*1.3, ringAngle*dir + i*1.3 + Math.PI*1.15);
+    orbCtx.stroke();
+  }
+
+  /* audio wave ring */
+  if (st === 'LISTENING' || st === 'SPEAKING'){
+    const bars = 40;
+    const level = st === 'LISTENING' ? sampleMicLevel() : speakPulse;
+    for (let i=0;i<bars;i++){
+      const a = (i/bars) * Math.PI * 2;
+      const len = R*0.16 * (0.25 + level * Math.abs(Math.sin(a*4 + idlePhase*2)));
+      const x1 = Math.cos(a)*R*0.6, y1 = Math.sin(a)*R*0.6;
+      const x2 = Math.cos(a)*(R*0.6+len), y2 = Math.sin(a)*(R*0.6+len);
+      orbCtx.strokeStyle = 'rgba('+color+',0.65)';
+      orbCtx.beginPath(); orbCtx.moveTo(x1,y1); orbCtx.lineTo(x2,y2); orbCtx.stroke();
+    }
+  }
+
+  /* core orb */
+  const coreR = R * (0.32 + amp*0.3);
+  const core = orbCtx.createRadialGradient(-coreR*0.3,-coreR*0.3, coreR*0.08, 0,0, coreR);
+  core.addColorStop(0, '#f3fbff');
+  core.addColorStop(0.4, 'rgba('+color+',0.92)');
+  core.addColorStop(1, 'rgba('+color+',0.12)');
+  orbCtx.fillStyle = core;
+  orbCtx.beginPath(); orbCtx.arc(0,0,coreR,0,Math.PI*2); orbCtx.fill();
+
+  /* vision scan line */
+  if (st === 'VISION_ANALYSIS'){
+    const scanY = ((idlePhase*70) % (R*2)) - R;
+    orbCtx.strokeStyle = 'rgba(124,240,255,0.75)';
+    orbCtx.lineWidth = 2;
+    orbCtx.beginPath(); orbCtx.moveTo(-R*0.85, scanY); orbCtx.lineTo(R*0.85, scanY); orbCtx.stroke();
+  }
+
+  orbCtx.restore();
+}
+requestAnimationFrame(renderOrb);
+
+/* ============================================================
+   Controls wiring
+   ============================================================ */
+btnMic.addEventListener('click', () => { interruptIfSpeaking(); micOn ? stopMic() : startMic(); });
+btnCam.addEventListener('click', () => { camOn ? stopCamera() : startCamera(); });
+btnSwitchCam.addEventListener('click', switchCamera);
+btnSnap.addEventListener('click', takeSnapshot);
+btnKeyboard.addEventListener('click', () => {
+  textForm.hidden = !textForm.hidden;
+  if (!textForm.hidden) textInput.focus();
+});
+textForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = textInput.value; textInput.value = '';
+  interruptIfSpeaking();
+  if (v.trim()) handleUtterance(v);
+});
+
+window.addEventListener('keydown', (e) => {
+  if (document.activeElement === textInput) return;
+  if (e.code === 'Space'){ e.preventDefault(); interruptIfSpeaking(); micOn ? stopMic() : startMic(); }
+  else if (e.key === 'c'){ camOn ? stopCamera() : startCamera(); }
+  else if (e.key === 'Escape'){ stopSpeaking(); stopMic(); }
+});
+
+/* keep interim/camera overlay sized correctly, stop streams when hidden */
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden){
+    if (camOn) stopCamera();
+    if (micOn) stopMic();
+  }
+});
+window.addEventListener('beforeunload', () => {
+  if (currentStream) currentStream.getTracks().forEach(t=>t.stop());
+  if (micStream) micStream.getTracks().forEach(t=>t.stop());
+});
+
+/* unsupported-feature / environment messaging */
+(function checkSupport(){
+  if (!window.isSecureContext){
+    /* getUserMedia AND SpeechRecognition both require a secure context —
+       https://, or http://localhost / http://127.0.0.1. A Termux http.server
+       opened from another device via the phone's LAN IP (http://192.168.x.x)
+       does NOT qualify, and the browser blocks both permissions silently. */
+    btnMic.disabled = true; btnCam.disabled = true;
+    btnMic.title = btnCam.title = 'Needs HTTPS or localhost.';
+    showBanner("Microphone and camera are blocked here because the page isn't served over HTTPS or localhost. Run it through the local server (see README) and open it as http://localhost:<port> on the same device — not the phone's LAN IP.", true);
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    btnCam.disabled = true; btnCam.title = 'Camera not supported in this browser.';
+  }
+  if (!SpeechRecognitionImpl){
+    btnMic.title = 'Speech recognition not supported here — use the keyboard.';
+  }
+})();
+
+addTranscript('ai', "Systems online. I'm ARIA.");
+
+})();
+</script>
+</body>
+</html>

@@ -409,11 +409,11 @@ function setState(next, opts){
 }
 
 let bannerTimer = null;
-function showBanner(msg){
+function showBanner(msg, sticky){
   bannerEl.textContent = msg;
   bannerEl.hidden = false;
   clearTimeout(bannerTimer);
-  bannerTimer = setTimeout(hideBanner, 6000);
+  if (!sticky) bannerTimer = setTimeout(hideBanner, 6000);
 }
 function hideBanner(){ bannerEl.hidden = true; }
 
@@ -440,11 +440,16 @@ window.addEventListener('offline', updateConn);
 updateConn();
 
 /* ============================================================
-   AI service — abstraction over the platform's `sample` capability.
-   Falls back to a local, rule-based reply when unavailable so the
-   app stays usable without a connected AI backend (see AIService below).
+   AI service — layered provider abstraction:
+     1) window.claude "sample" capability — only present when this page
+        is loaded inside a Claude.ai Artifact viewer
+     2) a same-origin backend proxy at /api/chat and /api/vision, for
+        standalone deployments (see server.js + README) — the proxy
+        holds the real API key server-side, never in this file
+     3) a local, rule-based reply, so the app still runs without either
+        backend connected, just without real reasoning
    ============================================================ */
-let aiSample = null, aiLimits = null;
+let aiSample = null, aiLimits = null, backendAvailable = null;
 async function initAI(){
   try {
     if (window.claude && window.claude.use) {
@@ -452,7 +457,14 @@ async function initAI(){
       if (aiSample) { try { aiLimits = await aiSample.limits(); } catch(_e){ aiLimits = null; } }
     }
   } catch(_e){ aiSample = null; }
-  lblAiStatus.textContent = aiSample ? 'AI LINKED' : 'LOCAL MODE';
+  if (aiSample){ lblAiStatus.textContent = 'AI LINKED'; return; }
+  lblAiStatus.textContent = 'LOCAL MODE';
+  /* not running inside a Claude.ai Artifact — see if a local backend
+     proxy (server.js) is reachable on this same origin instead */
+  try {
+    const res = await fetch('/api/health');
+    if (res.ok){ backendAvailable = true; lblAiStatus.textContent = 'AI LINKED'; }
+  } catch(_e){ /* no local backend either — stays LOCAL MODE */ }
 }
 initAI();
 
@@ -487,29 +499,80 @@ function aiErrorMessage(e){
   return map[code] || "I hit a snag reaching my reasoning engine. Try again shortly.";
 }
 
+/* Backend proxy calls — used only when the platform "sample" capability
+   isn't present. Talks to the same-origin server in server.js, which is
+   the only place the real API key ever lives. Returns null on any
+   failure so the caller can fall back further, rather than throwing. */
+async function backendChat(userText){
+  try {
+    const res = await fetch('/api/chat', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message:userText, history:chatHistory})
+    });
+    if (!res.ok) throw new Error('bad status');
+    const data = await res.json();
+    backendAvailable = true; lblAiStatus.textContent = 'AI LINKED';
+    return data.text || null;
+  } catch(_e){ return null; }
+}
+async function backendVision(blob, question){
+  try {
+    const form = new FormData();
+    form.append('image', blob, 'frame.jpg');
+    form.append('question', question);
+    const res = await fetch('/api/vision', {method:'POST', body:form});
+    if (!res.ok) throw new Error('bad status');
+    const data = await res.json();
+    backendAvailable = true; lblAiStatus.textContent = 'AI LINKED';
+    return data.text || null;
+  } catch(_e){ return null; }
+}
+
 const AIService = {
   async chat(userText){
-    if (!aiSample) return "I heard: \u201c" + userText + "\u201d. My reasoning engine isn't connected in this session, so I can only run direct commands — try camera, zoom, or snapshot.";
-    setAiBusy(true);
-    const turns = [{role:'user', content: PERSONA}].concat(chatHistory, [{role:'user', content:userText}]);
-    try {
-      const res = await aiSample(turns, {modelTier:'quick', cache:false});
-      chatHistory.push({role:'user', content:userText}, {role:'assistant', content:res.text});
-      trimHistory();
-      return res.text;
-    } catch(e){ return aiErrorMessage(e); }
-    finally { setAiBusy(false); }
+    if (aiSample){
+      setAiBusy(true);
+      const turns = [{role:'user', content: PERSONA}].concat(chatHistory, [{role:'user', content:userText}]);
+      try {
+        const res = await aiSample(turns, {modelTier:'quick', cache:false});
+        chatHistory.push({role:'user', content:userText}, {role:'assistant', content:res.text});
+        trimHistory();
+        return res.text;
+      } catch(e){ return aiErrorMessage(e); }
+      finally { setAiBusy(false); }
+    }
+    if (backendAvailable !== false){
+      setAiBusy(true);
+      const text = await backendChat(userText);
+      setAiBusy(false);
+      if (text){
+        chatHistory.push({role:'user', content:userText}, {role:'assistant', content:text});
+        trimHistory();
+        return text;
+      }
+      backendAvailable = false;
+    }
+    return "I heard: \u201c" + userText + "\u201d. My reasoning engine isn't connected in this session, so I can only run direct commands — try camera, zoom, or snapshot.";
   },
   async analyzeImage(blob, question){
-    if (!aiSample || !aiLimits || !aiLimits.images) return "Vision analysis isn't available in this session — I can still hear and speak.";
-    setAiBusy(true);
-    const prompt = PERSONA + " You are looking at one live camera frame. " + question +
-      " Answer in 1-2 short spoken sentences. If you genuinely can't tell, say so plainly instead of guessing.";
-    try {
-      const res = await aiSample(prompt, {images: blob, modelTier:'quick', cache:false});
-      return res.text;
-    } catch(e){ return aiErrorMessage(e); }
-    finally { setAiBusy(false); }
+    if (aiSample && aiLimits && aiLimits.images){
+      setAiBusy(true);
+      const prompt = PERSONA + " You are looking at one live camera frame. " + question +
+        " Answer in 1-2 short spoken sentences. If you genuinely can't tell, say so plainly instead of guessing.";
+      try {
+        const res = await aiSample(prompt, {images: blob, modelTier:'quick', cache:false});
+        return res.text;
+      } catch(e){ return aiErrorMessage(e); }
+      finally { setAiBusy(false); }
+    }
+    if (backendAvailable !== false){
+      setAiBusy(true);
+      const text = await backendVision(blob, question);
+      setAiBusy(false);
+      if (text) return text;
+      backendAvailable = false;
+    }
+    return "Vision analysis isn't available in this session — I can still hear and speak.";
   }
 };
 
@@ -571,8 +634,15 @@ async function handleUtterance(rawText){
    Voice: speech recognition (STT)
    ============================================================ */
 const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null, micOn = false, continuousMode = false;
+let recognition = null, micOn = false, continuousMode = false, recognitionActive = false, heardTimer = null;
 let micStream = null, micCtx = null, micAnalyser = null, micData = null;
+
+function armHeardWatchdog(){
+  clearTimeout(heardTimer);
+  heardTimer = setTimeout(() => {
+    if (micOn) showBanner("Still listening, but nothing has come through yet — check the mic permission (site settings) and your network connection.");
+  }, 9000);
+}
 
 function initRecognition(){
   if (!SpeechRecognitionImpl) return null;
@@ -580,7 +650,9 @@ function initRecognition(){
   r.lang = 'en-US';
   r.continuous = true;
   r.interimResults = true;
+  r.onstart = () => { recognitionActive = true; armHeardWatchdog(); };
   r.onresult = (ev) => {
+    clearTimeout(heardTimer);
     let interim = '', final = '';
     for (let i = ev.resultIndex; i < ev.results.length; i++){
       const t = ev.results[i][0].transcript;
@@ -590,22 +662,30 @@ function initRecognition(){
     if (final.trim()){
       interimEl.textContent = '';
       handleUtterance(final);
+    } else {
+      armHeardWatchdog();
     }
   };
   r.onerror = (ev) => {
     if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
-      micOn = false; continuousMode = false;
-      setState('ERROR', {message:'Microphone access was denied. Allow it in your browser settings to talk to ARIA.'});
+      micOn = false; continuousMode = false; recognitionActive = false;
+      setState('ERROR', {message:"Microphone access was denied. Allow it in the browser's site settings to talk to ARIA."});
       updateMicUI();
     } else if (ev.error === 'no-speech' || ev.error === 'aborted'){
-      /* benign */
+      /* benign — onend decides whether to restart */
+    } else if (ev.error === 'network'){
+      setState('ERROR', {message:'Speech recognition needs network access to reach the recognition service.'});
     } else {
       setState('ERROR', {message:'Speech recognition hit a problem (' + ev.error + ').'});
     }
   };
   r.onend = () => {
-    if (micOn && continuousMode){ try { r.start(); } catch(_e){} }
-    else if (State.current === 'LISTENING') setState(restState());
+    recognitionActive = false;
+    if (micOn && continuousMode){
+      /* small delay avoids the InvalidStateError some mobile browsers throw
+         when start() is called again in the same tick as onend */
+      setTimeout(() => { if (micOn && continuousMode && !recognitionActive){ try { r.start(); } catch(_e){} } }, 200);
+    } else if (State.current === 'LISTENING') setState(restState());
   };
   return r;
 }
@@ -616,21 +696,33 @@ async function startMic(){
     textForm.hidden = false;
     return;
   }
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
-  } catch(_e){
-    setState('ERROR', {message:'Microphone permission was denied or no microphone is available.'});
-    return;
-  }
-  setupAnalyser(micStream);
+  if (micOn) return;
   if (!recognition) recognition = initRecognition();
   micOn = true; continuousMode = true;
-  try { recognition.start(); } catch(_e){}
+  try {
+    recognition.start();
+  } catch(_e){
+    micOn = false; continuousMode = false;
+    setState('ERROR', {message:'Could not start speech recognition — try again.'});
+    updateMicUI();
+    return;
+  }
   setState('LISTENING');
   updateMicUI();
+  /* Best-effort only: a separate raw stream purely to drive the orb's
+     amplitude visualization. This is NOT required for recognition itself
+     (SpeechRecognition manages its own mic access), so its failure must
+     never block or undo the mic toggle above — that coupling was the
+     original bug where a denied/insecure-context getUserMedia call
+     silently prevented recognition.start() from ever running. */
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    setupAnalyser(micStream);
+  } catch(_e){ /* orb falls back to a generic listening pulse; STT still works */ }
 }
 function stopMic(){
   micOn = false; continuousMode = false;
+  clearTimeout(heardTimer);
   if (recognition){ try { recognition.stop(); } catch(_e){} }
   if (micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream = null; }
   teardownAnalyser();
@@ -764,8 +856,11 @@ async function takeSnapshot(){
     catch(_e){ addTranscript('ai', "Couldn't save the snapshot."); }
   } else {
     const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    addTranscript('ai', 'Snapshot downloaded.');
   }
 }
 
@@ -1090,8 +1185,18 @@ window.addEventListener('beforeunload', () => {
   if (micStream) micStream.getTracks().forEach(t=>t.stop());
 });
 
-/* unsupported-feature messaging */
+/* unsupported-feature / environment messaging */
 (function checkSupport(){
+  if (!window.isSecureContext){
+    /* getUserMedia AND SpeechRecognition both require a secure context —
+       https://, or http://localhost / http://127.0.0.1. A Termux http.server
+       opened from another device via the phone's LAN IP (http://192.168.x.x)
+       does NOT qualify, and the browser blocks both permissions silently. */
+    btnMic.disabled = true; btnCam.disabled = true;
+    btnMic.title = btnCam.title = 'Needs HTTPS or localhost.';
+    showBanner("Microphone and camera are blocked here because the page isn't served over HTTPS or localhost. Run it through the local server (see README) and open it as http://localhost:<port> on the same device — not the phone's LAN IP.", true);
+    return;
+  }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
     btnCam.disabled = true; btnCam.title = 'Camera not supported in this browser.';
   }
