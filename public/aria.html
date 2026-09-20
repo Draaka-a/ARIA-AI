@@ -451,8 +451,19 @@ updateConn();
         holds the real API key server-side, never in this file
      3) a local, rule-based reply, so the app still runs without either
         backend connected, just without real reasoning
+
+   Tier 2 used to disable itself PERMANENTLY (backendAvailable = false)
+   after a single failed call — one rate-limit or transient upstream
+   error and ARIA was stuck on the tier-3 canned reply for the rest of
+   the session, even once the backend recovered. It's now a short,
+   self-expiring cooldown instead: a failure skips the backend for a
+   bit, then automatically tries it again — no page reload needed, and
+   no per-message retry storm either.
    ============================================================ */
-let aiSample = null, aiLimits = null, backendAvailable = null;
+let aiSample = null, aiLimits = null;
+let backendCooldownUntil = 0; /* 0 = eligible to try now */
+const BACKEND_RETRY_MS = 15000;
+
 async function initAI(){
   try {
     if (window.claude && window.claude.use) {
@@ -463,10 +474,18 @@ async function initAI(){
   if (aiSample){ lblAiStatus.textContent = 'AI LINKED'; return; }
   lblAiStatus.textContent = 'LOCAL MODE';
   /* not running inside a Claude.ai Artifact — see if a local backend
-     proxy (server.js) is reachable on this same origin instead */
+     proxy (server.js) is reachable on this same origin instead. A 200
+     here only means the server process is up, NOT that the AI provider
+     is actually usable — "configured" reflects whether its API key is
+     present (see server.js), without spending a real API call to check. */
   try {
     const res = await fetch('/api/health');
-    if (res.ok){ backendAvailable = true; lblAiStatus.textContent = 'AI LINKED'; }
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.configured){
+      lblAiStatus.textContent = 'AI LINKED';
+    } else if (res.ok){
+      console.warn('[ARIA] Backend is running but has no provider API key configured.');
+    }
   } catch(_e){ /* no local backend either — stays LOCAL MODE */ }
 }
 initAI();
@@ -504,31 +523,54 @@ function aiErrorMessage(e){
 
 /* Backend proxy calls — used only when the platform "sample" capability
    isn't present. Talks to the same-origin server in server.js, which is
-   the only place the real API key ever lives. Returns null on any
-   failure so the caller can fall back further, rather than throwing. */
+   the only place the real API key ever lives.
+
+   Returns a structured result instead of swallowing everything into
+   null, so the caller can log *why* it failed (status code + message —
+   never the key, which never reaches this file at all) and decide how
+   long to back off: auth-looking failures (401/403) get a longer
+   cooldown since retrying immediately won't help until the key itself
+   is fixed; everything else (timeouts, network blips, 429s, 5xx,
+   malformed responses) is treated as transient. */
+function classifyBackendFailure(status){
+  return { ok:false, status: status || 0, permanent: status === 401 || status === 403 };
+}
 async function backendChat(userText){
   try {
     const res = await fetch('/api/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({message:userText, history:chatHistory})
+      body: JSON.stringify({message:userText, history:chatHistory}),
+      signal: AbortSignal.timeout(20000)
     });
-    if (!res.ok) throw new Error('bad status');
-    const data = await res.json();
-    backendAvailable = true; lblAiStatus.textContent = 'AI LINKED';
-    return data.text || null;
-  } catch(_e){ return null; }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.text){
+      console.error('[ARIA] /api/chat failed:', res.status, data.error || '(no text in response)');
+      return classifyBackendFailure(res.status);
+    }
+    lblAiStatus.textContent = 'AI LINKED';
+    return { ok:true, text: data.text };
+  } catch(e){
+    console.error('[ARIA] /api/chat request error:', e && (e.name === 'TimeoutError' ? 'timed out' : e.message));
+    return classifyBackendFailure(0);
+  }
 }
 async function backendVision(blob, question){
   try {
     const form = new FormData();
     form.append('image', blob, 'frame.jpg');
     form.append('question', question);
-    const res = await fetch('/api/vision', {method:'POST', body:form});
-    if (!res.ok) throw new Error('bad status');
-    const data = await res.json();
-    backendAvailable = true; lblAiStatus.textContent = 'AI LINKED';
-    return data.text || null;
-  } catch(_e){ return null; }
+    const res = await fetch('/api/vision', { method:'POST', body:form, signal: AbortSignal.timeout(20000) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.text){
+      console.error('[ARIA] /api/vision failed:', res.status, data.error || '(no text in response)');
+      return classifyBackendFailure(res.status);
+    }
+    lblAiStatus.textContent = 'AI LINKED';
+    return { ok:true, text: data.text };
+  } catch(e){
+    console.error('[ARIA] /api/vision request error:', e && (e.name === 'TimeoutError' ? 'timed out' : e.message));
+    return classifyBackendFailure(0);
+  }
 }
 
 const AIService = {
@@ -544,16 +586,17 @@ const AIService = {
       } catch(e){ return aiErrorMessage(e); }
       finally { setAiBusy(false); }
     }
-    if (backendAvailable !== false){
+    if (Date.now() >= backendCooldownUntil){
       setAiBusy(true);
-      const text = await backendChat(userText);
+      const result = await backendChat(userText);
       setAiBusy(false);
-      if (text){
-        chatHistory.push({role:'user', content:userText}, {role:'assistant', content:text});
+      if (result.ok){
+        backendCooldownUntil = 0;
+        chatHistory.push({role:'user', content:userText}, {role:'assistant', content:result.text});
         trimHistory();
-        return text;
+        return result.text;
       }
-      backendAvailable = false;
+      backendCooldownUntil = Date.now() + (result.permanent ? BACKEND_RETRY_MS * 4 : BACKEND_RETRY_MS);
     }
     return "I heard: \u201c" + userText + "\u201d. My reasoning engine isn't connected in this session, so I can only run direct commands — try camera, zoom, or snapshot.";
   },
@@ -568,12 +611,15 @@ const AIService = {
       } catch(e){ return aiErrorMessage(e); }
       finally { setAiBusy(false); }
     }
-    if (backendAvailable !== false){
+    if (Date.now() >= backendCooldownUntil){
       setAiBusy(true);
-      const text = await backendVision(blob, question);
+      const result = await backendVision(blob, question);
       setAiBusy(false);
-      if (text) return text;
-      backendAvailable = false;
+      if (result.ok){
+        backendCooldownUntil = 0;
+        return result.text;
+      }
+      backendCooldownUntil = Date.now() + (result.permanent ? BACKEND_RETRY_MS * 4 : BACKEND_RETRY_MS);
     }
     return "Vision analysis isn't available in this session — I can still hear and speak.";
   }

@@ -25,36 +25,65 @@ function activeModel(){
 }
 
 async function callChatCompletions(messages){
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'authorization': 'Bearer ' + requireKey(),
-      /* optional, but recommended by OpenRouter so usage shows up nicely
-         attributed to this app in their dashboard */
-      'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'http://localhost',
-      'X-Title': process.env.OPENROUTER_SITE_NAME || 'ARIA Assistant'
-    },
-    body: JSON.stringify({
-      model: activeModel(),
-      max_tokens: 400,
-      /* Some free/auto-routed models are "thinking" models that otherwise
-         dump their whole chain-of-thought into message.content, eating the
-         token budget before ever reaching the actual reply. This asks
-         OpenRouter to keep reasoning internal (or skip it) and return only
-         the final answer; models that don't support it just ignore it. */
-      reasoning: { effort: 'low', exclude: true },
-      messages
-    })
-  });
+  const apiKey = requireKey(); /* throws its own clear error before any network attempt */
+  let res;
+  try {
+    res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'authorization': 'Bearer ' + apiKey,
+        /* optional, but recommended by OpenRouter so usage shows up nicely
+           attributed to this app in their dashboard */
+        'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'http://localhost',
+        'X-Title': process.env.OPENROUTER_SITE_NAME || 'ARIA Assistant'
+      },
+      body: JSON.stringify({
+        model: activeModel(),
+        max_tokens: 400,
+        /* Some free/auto-routed models are "thinking" models that otherwise
+           dump their whole chain-of-thought into message.content, eating the
+           token budget before ever reaching the actual reply. This asks
+           OpenRouter to keep reasoning internal (or skip it) and return only
+           the final answer; models that don't support it just ignore it. */
+        reasoning: { effort: 'low', exclude: true },
+        messages
+      }),
+      /* openrouter/free can route to a slow or hung upstream model; without
+         this a single bad request could hang the whole /api/chat call
+         indefinitely (Node's fetch has no default timeout). */
+      signal: AbortSignal.timeout(20000)
+    });
+  } catch (networkErr){
+    const timedOut = networkErr && (networkErr.name === 'TimeoutError' || networkErr.name === 'AbortError');
+    const err = new Error(timedOut ? 'OpenRouter request timed out' : ('OpenRouter network error: ' + networkErr.message));
+    err.status = 0;
+    throw err;
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok){
     const msg = (data && data.error && data.error.message) || ('OpenRouter API error ' + res.status);
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
   const choice = data.choices && data.choices[0];
   const text = choice && choice.message && choice.message.content;
-  return (text || '').trim();
+  if (!text){
+    /* openrouter/free occasionally returns HTTP 200 with an empty or
+       reasoning-only response (no usable content) — treat that as a
+       failure to report rather than silently succeeding with "". */
+    const err = new Error('OpenRouter returned no usable content (empty or malformed response)');
+    err.status = 502;
+    throw err;
+  }
+  return text.trim();
+}
+
+/* Cheap, no-network check for /api/health — confirms the required key is
+   present without spending a real (and possibly costly) API call. */
+function isConfigured(){
+  return !!process.env.OPENROUTER_API_KEY;
 }
 
 /**
@@ -89,4 +118,4 @@ async function vision(imageBuffer, mimeType, question){
   return { text };
 }
 
-module.exports = { chat, vision };
+module.exports = { chat, vision, isConfigured };

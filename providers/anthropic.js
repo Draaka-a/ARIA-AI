@@ -18,22 +18,46 @@ function requireKey(){
 }
 
 async function callMessages(body){
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': requireKey(),
-      'anthropic-version': API_VERSION
-    },
-    body: JSON.stringify(body)
-  });
+  const apiKey = requireKey(); /* throws its own clear error before any network attempt */
+  let res;
+  try {
+    res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': API_VERSION
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20000)
+    });
+  } catch (networkErr){
+    const timedOut = networkErr && (networkErr.name === 'TimeoutError' || networkErr.name === 'AbortError');
+    const err = new Error(timedOut ? 'Anthropic request timed out' : ('Anthropic network error: ' + networkErr.message));
+    err.status = 0;
+    throw err;
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok){
     const msg = (data && data.error && data.error.message) || ('Anthropic API error ' + res.status);
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
   const block = (data.content || []).find((b) => b.type === 'text');
-  return block ? block.text.trim() : '';
+  const text = block && block.text && block.text.trim();
+  if (!text){
+    const err = new Error('Anthropic returned no usable content (empty or malformed response)');
+    err.status = 502;
+    throw err;
+  }
+  return text;
+}
+
+/* Cheap, no-network check for /api/health — confirms the required key is
+   present without spending a real (and possibly costly) API call. */
+function isConfigured(){
+  return !!process.env.ANTHROPIC_API_KEY;
 }
 
 /**
@@ -74,4 +98,4 @@ async function vision(imageBuffer, mimeType, question){
   return { text };
 }
 
-module.exports = { chat, vision };
+module.exports = { chat, vision, isConfigured };
