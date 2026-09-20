@@ -175,8 +175,6 @@
     overflow:hidden;
     display:flex;flex-direction:column;
     gap:6px;
-    mask-image:linear-gradient(to bottom, transparent, black 30%);
-    -webkit-mask-image:linear-gradient(to bottom, transparent, black 30%);
   }
   #transcript .line{
     font-size:13.5px;line-height:1.5;
@@ -317,7 +315,10 @@
 
   <div class="transcript-wrap">
     <div style="display:flex;flex-direction:column;width:100%;align-items:center;">
-      <div id="transcript"></div>
+      <div id="transcript">
+        <div class="line user" id="line-user" hidden></div>
+        <div class="line ai" id="line-ai" hidden></div>
+      </div>
       <div id="interim"></div>
     </div>
   </div>
@@ -380,6 +381,7 @@ const reticle = $('reticle');
 const hintEl = $('hint');
 const bannerEl = $('banner');
 const transcriptEl = $('transcript'), interimEl = $('interim');
+const lineUserEl = $('line-user'), lineAiEl = $('line-ai');
 const lblMode = $('lbl-mode'), lblClock = $('lbl-clock'), lblConn = $('lbl-conn');
 const dotConn = $('dot-conn'), dotMic = $('dot-mic'), dotCam = $('dot-cam'), dotAi = $('dot-ai');
 const lblAiStatus = $('lbl-ai-status');
@@ -422,11 +424,14 @@ function hideBanner(){ bannerEl.hidden = true; }
 
 function addTranscript(who, text){
   hintEl.style.opacity = '0';
-  const line = document.createElement('div');
-  line.className = 'line ' + who;
-  line.textContent = text;
-  transcriptEl.appendChild(line);
-  while (transcriptEl.children.length > 30) transcriptEl.removeChild(transcriptEl.firstChild);
+  const el = who === 'user' ? lineUserEl : lineAiEl;
+  el.textContent = text;
+  el.hidden = false;
+  /* re-trigger the reveal animation on every update — reusing the same
+     element means it won't replay automatically like a freshly-created one would */
+  el.style.animation = 'none';
+  void el.offsetWidth;
+  el.style.animation = '';
 }
 
 /* clock + connection */
