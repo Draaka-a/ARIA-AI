@@ -633,10 +633,23 @@ const AIService = {
 /* ============================================================
    Natural-language intent / action layer
    ============================================================ */
+/* Strips a leading address like "ARIA," or "Hey ARIA" and trailing
+   punctuation before matching, so natural phrasing ("ARIA, turn on the
+   flashlight") matches the same patterns as the bare command would. */
+function normalizeCommand(text){
+  return (text || '')
+    .toLowerCase()
+    .replace(/^\s*(hey\s+)?aria[,!.\s]+/i, '')
+    .replace(/[!?.]+$/, '')
+    .trim();
+}
+
 const INTENTS = [
   {re:/\b(open|start|turn on|activate)\b.*\bcamera\b|\blook at this\b|\bcheck this out\b/i, action:'CAMERA_ON'},
-  {re:/\b(close|turn off)\b.*\bcamera\b|\bgo back\b/i, action:'CAMERA_OFF'},
+  {re:/\b(close|stop|turn off)\b.*\bcamera\b|\bgo back\b/i, action:'CAMERA_OFF'},
   {re:/\bswitch\b.*\bcamera\b|\bother camera\b|\bflip camera\b|\bfront camera\b|\bback camera\b/i, action:'CAMERA_SWITCH'},
+  {re:/\b(turn on|switch on|activate)\b.*\bflashlight\b/i, action:'FLASHLIGHT_ON'},
+  {re:/\b(turn off|switch off|deactivate)\b.*\bflashlight\b/i, action:'FLASHLIGHT_OFF'},
   {re:/\bzoom in\b|\bcloser look\b|\bget closer\b|\btake a closer look\b/i, action:'ZOOM_IN'},
   {re:/\bzoom out\b|\bstep back\b|\bzoom back\b/i, action:'ZOOM_OUT'},
   {re:/\b(take|grab)\b.*\b(snapshot|screenshot|photo|picture)\b|\bsnapshot\b/i, action:'SNAPSHOT'},
@@ -644,7 +657,14 @@ const INTENTS = [
   {re:/\bstop speaking\b|\bbe quiet\b|\bsilence\b/i, action:'STOP_SPEAK'},
   {re:/^\s*stop\s*$/i, action:'STOP_ALL'},
 ];
-function matchIntent(text){
+function matchIntent(rawText){
+  const text = normalizeCommand(rawText);
+  /* Standalone toggle words are an intentional exception to the substring
+     patterns below — checked as an exact match (not \bcamera\b anywhere)
+     specifically so "I was testing the camera yesterday" does NOT trigger
+     this, only a message that, once normalized, IS just that one word. */
+  if (text === 'camera') return camOn ? 'CAMERA_OFF' : 'CAMERA_ON';
+  if (text === 'flashlight') return torchIsOn() ? 'FLASHLIGHT_OFF' : 'FLASHLIGHT_ON';
   for (const i of INTENTS) if (i.re.test(text)) return i.action;
   return null;
 }
@@ -653,6 +673,8 @@ async function runAction(action){
     case 'CAMERA_ON': await startCamera(); break;
     case 'CAMERA_OFF': stopCamera(); break;
     case 'CAMERA_SWITCH': await switchCamera(); break;
+    case 'FLASHLIGHT_ON': await setTorch(true); break;
+    case 'FLASHLIGHT_OFF': await setTorch(false); break;
     case 'ZOOM_IN': nudgeZoom(0.3); break;
     case 'ZOOM_OUT': nudgeZoom(-0.3); break;
     case 'SNAPSHOT': await takeSnapshot(); break;
@@ -1037,6 +1059,42 @@ function applyZoom(target){
 }
 function nudgeZoom(delta){ smoothedZoom = zoomLevel; applyZoom(zoomLevel + delta); }
 function updateZoomLabel(){ zoomLbl.textContent = zoomLevel.toFixed(2) + 'x'; }
+
+/* ---- Flashlight / torch control ----
+   Mirrors the zoom pattern above: getCapabilities() to check support,
+   getSettings() to read the actual current hardware state (never a
+   separately-tracked boolean that could drift from reality), and
+   applyConstraints() only to change it. Tied to the active camera track,
+   so it's automatically unavailable whenever the camera itself is off. */
+function getActiveVideoTrack(){
+  return currentStream && currentStream.getVideoTracks()[0];
+}
+function torchSupported(){
+  const track = getActiveVideoTrack();
+  if (!track || !track.getCapabilities) return false;
+  try { return !!track.getCapabilities().torch; } catch(_e){ return false; }
+}
+function torchIsOn(){
+  const track = getActiveVideoTrack();
+  if (!track || !track.getSettings) return false;
+  try { return !!track.getSettings().torch; } catch(_e){ return false; }
+}
+async function setTorch(on){
+  if (!camOn){
+    addTranscript('ai', 'Turn the camera on first — the flashlight uses the camera.');
+    return;
+  }
+  if (!torchSupported()){
+    addTranscript('ai', "This device or browser doesn't support flashlight control.");
+    return;
+  }
+  try {
+    await getActiveVideoTrack().applyConstraints({ advanced: [{ torch: on }] });
+    addTranscript('ai', on ? 'Flashlight on.' : 'Flashlight off.');
+  } catch(_e){
+    addTranscript('ai', "Couldn't control the flashlight on this device.");
+  }
+}
 
 /* touch pinch-to-zoom + wheel + swipe + tap/double-tap/long-press */
 let pinchStartDist = null, pinchStartZoom = 1;
