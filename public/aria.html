@@ -682,6 +682,7 @@ function matchIntent(rawText){
    the way repeatedly decrementing a counter every ~1000ms can. */
 let timerActive = false;
 let timerEndAt = 0;
+let timerTotalMs = 0;
 let timerCompleteTimeout = null;
 
 function parseDurationSeconds(text){
@@ -713,7 +714,8 @@ function startTimerFromText(rawText){
   const wasActive = timerActive;
   clearTimeout(timerCompleteTimeout);
   timerActive = true;
-  timerEndAt = Date.now() + seconds * 1000;
+  timerTotalMs = seconds * 1000;
+  timerEndAt = Date.now() + timerTotalMs;
   setState('TIMER_ACTIVE');
   addTranscript('ai', (wasActive ? 'Replacing the current timer — now set for ' : 'Timer set for ') + formatDuration(seconds*1000) + '.');
 }
@@ -1357,7 +1359,7 @@ function resizeOrb(){
 window.addEventListener('resize', resizeOrb);
 resizeOrb();
 
-let idlePhase = 0, ringAngle = 0, errorShake = 0;
+let idlePhase = 0, ringAngle = 0, errorShake = 0, timerMorph = 0;
 const motionScale = reducedMotion ? 0.35 : 1;
 
 /* ---- Timer digit rendering ----
@@ -1421,16 +1423,25 @@ function renderOrb(){
   else if (st === 'ERROR'){ color = '255,84,112'; errorShake = Math.min(1, errorShake + 0.12); }
   if (st !== 'ERROR') errorShake *= 0.86;
 
+  /* Orb-to-timer morph (0 = normal orb, 1 = fully in timer mode). Eased
+     toward its target using the same +=(target-current)*factor smoothing
+     already used for pinch-zoom elsewhere in this file, so entering AND
+     leaving the timer state both animate through this one value — no
+     separate "reverse transition" code path is needed. */
+  const timerTarget = (st === 'TIMER_ACTIVE' || st === 'TIMER_COMPLETE') ? 1 : 0;
+  timerMorph += (timerTarget - timerMorph) * 0.08;
+
   const shakeMag = errorShake * 6 * motionScale;
   const sx = (Math.random()-0.5) * shakeMag, sy = (Math.random()-0.5) * shakeMag;
 
   orbCtx.save();
   orbCtx.translate(cx + sx, cy + sy);
 
-  /* outer glow */
-  const glowR = R * (0.95 + amp*0.55);
+  /* outer glow — contracts and dims as the orb morphs toward the timer
+     display, so its ambient bloom stops competing with the digits */
+  const glowR = R * (0.95 + amp*0.55) * (1 - timerMorph*0.4);
   const glow = orbCtx.createRadialGradient(0,0, R*0.15, 0,0, glowR);
-  glow.addColorStop(0, 'rgba('+color+',0.30)');
+  glow.addColorStop(0, 'rgba('+color+','+(0.30*(1-timerMorph*0.5))+')');
   glow.addColorStop(1, 'rgba('+color+',0)');
   orbCtx.fillStyle = glow;
   orbCtx.beginPath(); orbCtx.arc(0,0,glowR,0,Math.PI*2); orbCtx.fill();
@@ -1442,7 +1453,7 @@ function renderOrb(){
     orbCtx.strokeStyle = 'rgba('+color+','+(0.55 - i*0.12)+')';
     orbCtx.beginPath();
     const dir = i % 2 ? 1 : -1;
-    orbCtx.arc(0,0, R*0.8 - i*11, ringAngle*dir + i*1.3, ringAngle*dir + i*1.3 + Math.PI*1.15);
+    orbCtx.arc(0,0, (R*0.8 - i*11) * (1 - timerMorph*0.08), ringAngle*dir + i*1.3, ringAngle*dir + i*1.3 + Math.PI*1.15);
     orbCtx.stroke();
   }
 
@@ -1460,16 +1471,52 @@ function renderOrb(){
     }
   }
 
-  /* core orb */
-  const coreR = R * (0.32 + amp*0.3);
+  /* core orb — its bright white-hot center shrinks and dims as the orb
+     morphs toward timer mode, since that hotspot sat directly behind the
+     digits and was the main cause of them visually melting together */
+  const coreR = R * (0.32 + amp*0.3) * (1 - timerMorph*0.5);
   const core = orbCtx.createRadialGradient(-coreR*0.3,-coreR*0.3, coreR*0.08, 0,0, coreR);
-  core.addColorStop(0, '#f3fbff');
-  core.addColorStop(0.4, 'rgba('+color+',0.92)');
+  core.addColorStop(0, 'rgba(255,255,255,'+(1 - timerMorph*0.55)+')');
+  core.addColorStop(0.4, 'rgba('+color+','+(0.92*(1-timerMorph*0.3))+')');
   core.addColorStop(1, 'rgba('+color+',0.12)');
   orbCtx.fillStyle = core;
   orbCtx.beginPath(); orbCtx.arc(0,0,coreR,0,Math.PI*2); orbCtx.fill();
 
-  /* timer countdown / completion text — reuses whatever accent color is
+  /* dedicated timer boundary — steady (non-rotating), distinct from the
+     ambient orb rings above, so the countdown reads as its own contained
+     display rather than text floating over the orb. Doubles as a
+     progress ring while a timer counts down. Fades in/out with the morph
+     so it never appears as a sudden overlay. */
+  if (timerMorph > 0.02){
+    const boundaryR = R * 0.72;
+    const baseAlpha = 0.4 * timerMorph;
+    orbCtx.lineWidth = Math.max(1.5, R*0.012);
+    orbCtx.strokeStyle = 'rgba('+color+','+(baseAlpha*0.4)+')';
+    orbCtx.beginPath(); orbCtx.arc(0,0,boundaryR,0,Math.PI*2); orbCtx.stroke();
+
+    if (st === 'TIMER_ACTIVE' && timerTotalMs > 0){
+      const elapsedFrac = 1 - Math.max(0, Math.min(1, (timerEndAt - Date.now()) / timerTotalMs));
+      orbCtx.strokeStyle = 'rgba('+color+','+baseAlpha+')';
+      orbCtx.beginPath();
+      orbCtx.arc(0,0,boundaryR, -Math.PI/2, -Math.PI/2 + elapsedFrac*Math.PI*2);
+      orbCtx.stroke();
+    } else if (st === 'TIMER_COMPLETE'){
+      orbCtx.strokeStyle = 'rgba('+color+','+baseAlpha+')';
+      orbCtx.beginPath(); orbCtx.arc(0,0,boundaryR,0,Math.PI*2); orbCtx.stroke();
+    }
+
+    /* small HUD-style label above the digits — "TIMER / 05:00" reads as
+       one dedicated display, not digits floating over an unrelated orb */
+    orbCtx.globalAlpha = timerMorph;
+    orbCtx.fillStyle = 'rgba(234,246,255,0.75)';
+    orbCtx.font = '600 ' + Math.max(10, Math.round(R*0.075)) + 'px "JetBrains Mono", monospace';
+    orbCtx.textAlign = 'center';
+    orbCtx.textBaseline = 'middle';
+    orbCtx.fillText(st === 'TIMER_COMPLETE' ? 'COMPLETE' : 'TIMER', 0, -R*0.22);
+    orbCtx.globalAlpha = 1;
+  }
+
+  /* timer countdown / completion digits — reuses whatever accent color is
      already driving this state's orb (cyan for active, the same amber
      already used for THINKING for completion) so the digits are always
      in sync with the orb rather than a separate hardcoded palette. See
@@ -1480,11 +1527,15 @@ function renderOrb(){
       completeTimer();
     } else {
       const pulse = 1 + Math.sin(idlePhase*1.2) * 0.015 * motionScale;
+      orbCtx.globalAlpha = timerMorph;
       drawTimerDigits(formatDuration(remainingMs), color, 0.6, pulse, R);
+      orbCtx.globalAlpha = 1;
     }
   } else if (st === 'TIMER_COMPLETE'){
     const pulse = 1 + Math.sin(idlePhase*4) * 0.05 * motionScale;
+    orbCtx.globalAlpha = timerMorph;
     drawTimerDigits('00:00', color, 0.9, pulse, R);
+    orbCtx.globalAlpha = 1;
   }
 
   /* vision scan line */
