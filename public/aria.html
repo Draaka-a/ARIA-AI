@@ -947,6 +947,9 @@ async function listCameras(){
 
 async function startCamera(){
   interruptIfSpeaking();
+  /* if the flashlight was running standalone (no camera UI open), release
+     that hidden stream first — opening the visible camera gets its own */
+  stopTorchStream();
   try {
     currentStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
   } catch(_e){
@@ -1061,13 +1064,18 @@ function nudgeZoom(delta){ smoothedZoom = zoomLevel; applyZoom(zoomLevel + delta
 function updateZoomLabel(){ zoomLbl.textContent = zoomLevel.toFixed(2) + 'x'; }
 
 /* ---- Flashlight / torch control ----
-   Mirrors the zoom pattern above: getCapabilities() to check support,
-   getSettings() to read the actual current hardware state (never a
-   separately-tracked boolean that could drift from reality), and
-   applyConstraints() only to change it. Tied to the active camera track,
-   so it's automatically unavailable whenever the camera itself is off. */
+   Same getCapabilities/getSettings/applyConstraints pattern as zoom above.
+   Torch is only ever exposed via a camera video track — there's no
+   separate "flashlight" API in browsers — so using it without the visible
+   camera UI open means quietly holding a hidden, preview-less stream
+   (torchStream) just for that track. camOn / the camera UI never change
+   because of this; the only outward sign is the OS's own camera-in-use
+   indicator, which we can't and shouldn't suppress. */
+let torchStream = null;
 function getActiveVideoTrack(){
-  return currentStream && currentStream.getVideoTracks()[0];
+  if (camOn && currentStream) return currentStream.getVideoTracks()[0];
+  if (torchStream) return torchStream.getVideoTracks()[0];
+  return null;
 }
 function torchSupported(){
   const track = getActiveVideoTrack();
@@ -1079,21 +1087,38 @@ function torchIsOn(){
   if (!track || !track.getSettings) return false;
   try { return !!track.getSettings().torch; } catch(_e){ return false; }
 }
+function stopTorchStream(){
+  if (torchStream){ torchStream.getTracks().forEach(t => t.stop()); torchStream = null; }
+}
 async function setTorch(on){
-  if (!camOn){
+  if (on && !camOn && !torchStream){
+    /* nothing open yet — grab a background-only stream just for the torch */
+    try {
+      torchStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    } catch(_e){
+      addTranscript('ai', "Couldn't access the camera to control the flashlight.");
+      return;
+    }
+  }
+  const track = getActiveVideoTrack();
+  if (!track){
     addTranscript('ai', 'Turn the camera on first — the flashlight uses the camera.');
     return;
   }
   if (!torchSupported()){
     addTranscript('ai', "This device or browser doesn't support flashlight control.");
+    stopTorchStream();
     return;
   }
   try {
-    await getActiveVideoTrack().applyConstraints({ advanced: [{ torch: on }] });
+    await track.applyConstraints({ advanced: [{ torch: on }] });
     addTranscript('ai', on ? 'Flashlight on.' : 'Flashlight off.');
   } catch(_e){
     addTranscript('ai', "Couldn't control the flashlight on this device.");
   }
+  /* flashlight is off and it was running on the hidden background stream
+     (not the visible camera) — release it, no reason to keep the sensor open */
+  if (!on) stopTorchStream();
 }
 
 /* touch pinch-to-zoom + wheel + swipe + tap/double-tap/long-press */
@@ -1373,11 +1398,13 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden){
     if (camOn) stopCamera();
     if (micOn) stopMic();
+    stopTorchStream();
   }
 });
 window.addEventListener('beforeunload', () => {
   if (currentStream) currentStream.getTracks().forEach(t=>t.stop());
   if (micStream) micStream.getTracks().forEach(t=>t.stop());
+  if (torchStream) torchStream.getTracks().forEach(t=>t.stop());
 });
 
 /* unsupported-feature / environment messaging */
