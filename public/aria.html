@@ -401,6 +401,7 @@ const State = { current: 'IDLE' };
 function restState(){
   if (micOn) return 'LISTENING';
   if (camOn) return 'CAMERA';
+  if (timerActive) return 'TIMER_ACTIVE';
   return 'IDLE';
 }
 function setState(next, opts){
@@ -650,6 +651,8 @@ const INTENTS = [
   {re:/\bswitch\b.*\bcamera\b|\bother camera\b|\bflip camera\b|\bfront camera\b|\bback camera\b/i, action:'CAMERA_SWITCH'},
   {re:/\b(turn on|switch on|activate)\b.*\bflashlight\b/i, action:'FLASHLIGHT_ON'},
   {re:/\b(turn off|switch off|deactivate)\b.*\bflashlight\b/i, action:'FLASHLIGHT_OFF'},
+  {re:/\b(set|start)\b.*\btimer\b/i, action:'TIMER_SET'},
+  {re:/\b(cancel|stop)\b.*\btimer\b/i, action:'TIMER_CANCEL'},
   {re:/\bzoom in\b|\bcloser look\b|\bget closer\b|\btake a closer look\b/i, action:'ZOOM_IN'},
   {re:/\bzoom out\b|\bstep back\b|\bzoom back\b/i, action:'ZOOM_OUT'},
   {re:/\b(take|grab)\b.*\b(snapshot|screenshot|photo|picture)\b|\bsnapshot\b/i, action:'SNAPSHOT'},
@@ -668,13 +671,84 @@ function matchIntent(rawText){
   for (const i of INTENTS) if (i.re.test(text)) return i.action;
   return null;
 }
-async function runAction(action){
+
+/* ---- Voice-controlled countdown timer ----
+   Runs entirely client-side and is checked before any AI/OpenRouter call
+   (see matchIntent above), so it keeps working even when the backend is
+   rate-limited or offline. The countdown itself piggybacks on the existing
+   requestAnimationFrame orb-render loop (see renderOrb) instead of a
+   separate setInterval — remaining time is always recomputed from an
+   absolute target timestamp (timerEndAt - Date.now()), so it can't drift
+   the way repeatedly decrementing a counter every ~1000ms can. */
+let timerActive = false;
+let timerEndAt = 0;
+let timerCompleteTimeout = null;
+
+function parseDurationSeconds(text){
+  let total = 0, matched = false;
+  const h = text.match(/(\d+)\s*(?:hours?|hrs?)\b/i);
+  if (h){ total += parseInt(h[1],10) * 3600; matched = true; }
+  const m = text.match(/(\d+)\s*(?:minutes?|mins?)\b/i);
+  if (m){ total += parseInt(m[1],10) * 60; matched = true; }
+  const s = text.match(/(\d+)\s*(?:seconds?|secs?)\b/i);
+  if (s){ total += parseInt(s[1],10); matched = true; }
+  return (matched && total > 0) ? total : null;
+}
+function formatDuration(ms){
+  const totalSec = Math.max(0, Math.round(ms/1000));
+  const hh = Math.floor(totalSec/3600);
+  const mm = Math.floor((totalSec%3600)/60);
+  const ss = totalSec%60;
+  const pad = (n) => String(n).padStart(2,'0');
+  return hh > 0 ? (pad(hh)+':'+pad(mm)+':'+pad(ss)) : (pad(mm)+':'+pad(ss));
+}
+function startTimerFromText(rawText){
+  const seconds = parseDurationSeconds(rawText || '');
+  if (!seconds){
+    const msg = "I didn't catch a valid duration — try something like 'set a timer for 5 minutes.'";
+    addTranscript('ai', msg);
+    speak(msg);
+    return;
+  }
+  const wasActive = timerActive;
+  clearTimeout(timerCompleteTimeout);
+  timerActive = true;
+  timerEndAt = Date.now() + seconds * 1000;
+  setState('TIMER_ACTIVE');
+  addTranscript('ai', (wasActive ? 'Replacing the current timer — now set for ' : 'Timer set for ') + formatDuration(seconds*1000) + '.');
+}
+function cancelTimer(){
+  if (!timerActive){
+    addTranscript('ai', 'No timer is currently running.');
+    return;
+  }
+  timerActive = false;
+  clearTimeout(timerCompleteTimeout);
+  addTranscript('ai', 'Timer cancelled.');
+  setState(restState());
+}
+function completeTimer(){
+  timerActive = false;
+  setState('TIMER_COMPLETE');
+  const msg = 'Your timer is complete.';
+  addTranscript('ai', msg);
+  speak(msg);
+  /* safety net: return to normal even if speechSynthesis is unsupported
+     (speak() would then never fire the onend that normally does this) */
+  timerCompleteTimeout = setTimeout(() => {
+    if (State.current === 'TIMER_COMPLETE') setState(restState());
+  }, 3000);
+}
+
+async function runAction(action, rawText){
   switch(action){
     case 'CAMERA_ON': await startCamera(); break;
     case 'CAMERA_OFF': stopCamera(); break;
     case 'CAMERA_SWITCH': await switchCamera(); break;
     case 'FLASHLIGHT_ON': await setTorch(true); break;
     case 'FLASHLIGHT_OFF': await setTorch(false); break;
+    case 'TIMER_SET': startTimerFromText(rawText); break;
+    case 'TIMER_CANCEL': cancelTimer(); break;
     case 'ZOOM_IN': nudgeZoom(0.3); break;
     case 'ZOOM_OUT': nudgeZoom(-0.3); break;
     case 'SNAPSHOT': await takeSnapshot(); break;
@@ -690,7 +764,7 @@ async function handleUtterance(rawText){
   addTranscript('user', text);
   const action = matchIntent(text);
   if (action){
-    await runAction(action);
+    await runAction(action, text);
     return;
   }
   setState('THINKING');
@@ -1303,6 +1377,8 @@ function renderOrb(){
   else if (st === 'THINKING'){ color = '255,177,79'; ringSpeed = 1.6; amp = 0.55 + Math.sin(idlePhase*2)*0.03; }
   else if (st === 'SPEAKING'){ speakPulse *= 0.9; amp = 0.55 + speakPulse*0.32 + Math.sin(idlePhase*3)*0.02; }
   else if (st === 'VISION_ANALYSIS'){ color = '124,240,255'; amp = 0.55 + Math.sin(idlePhase*1.4)*0.05; ringSpeed = 0.8; }
+  else if (st === 'TIMER_ACTIVE'){ amp = 0.55 + Math.sin(idlePhase*1.2)*0.04; ringSpeed = 0.25; }
+  else if (st === 'TIMER_COMPLETE'){ color = '255,177,79'; amp = 0.6 + Math.sin(idlePhase*3)*0.05; ringSpeed = 1.2; }
   else if (st === 'ERROR'){ color = '255,84,112'; errorShake = Math.min(1, errorShake + 0.12); }
   if (st !== 'ERROR') errorShake *= 0.86;
 
@@ -1353,6 +1429,27 @@ function renderOrb(){
   core.addColorStop(1, 'rgba('+color+',0.12)');
   orbCtx.fillStyle = core;
   orbCtx.beginPath(); orbCtx.arc(0,0,coreR,0,Math.PI*2); orbCtx.fill();
+
+  /* timer countdown / completion text — same telemetry font as the HUD,
+     no new color scheme, just drawn over the existing core orb glow */
+  if (st === 'TIMER_ACTIVE'){
+    const remainingMs = timerEndAt - Date.now();
+    if (remainingMs <= 0){
+      completeTimer();
+    } else {
+      orbCtx.fillStyle = '#eaf6ff';
+      orbCtx.font = '600 ' + Math.round(R*0.42) + 'px "JetBrains Mono", monospace';
+      orbCtx.textAlign = 'center';
+      orbCtx.textBaseline = 'middle';
+      orbCtx.fillText(formatDuration(remainingMs), 0, 0);
+    }
+  } else if (st === 'TIMER_COMPLETE'){
+    orbCtx.fillStyle = '#eaf6ff';
+    orbCtx.font = '600 ' + Math.round(R*0.42) + 'px "JetBrains Mono", monospace';
+    orbCtx.textAlign = 'center';
+    orbCtx.textBaseline = 'middle';
+    orbCtx.fillText('00:00', 0, 0);
+  }
 
   /* vision scan line */
   if (st === 'VISION_ANALYSIS'){
