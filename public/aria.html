@@ -1360,6 +1360,45 @@ resizeOrb();
 let idlePhase = 0, ringAngle = 0, errorShake = 0;
 const motionScale = reducedMotion ? 0.35 : 1;
 
+/* ---- Timer digit rendering ----
+   Mirrors the core-orb gradient treatment above (bright near-white
+   highlight fading into the state's accent color) instead of plain solid
+   text, plus a glowing outline pass and an auto-shrinking font so longer
+   HH:MM:SS text never overflows the orb on small phone screens. */
+function drawTimerDigits(text, rgb, glowStrength, pulseScale, R){
+  const maxWidth = R * 1.55;
+  let fontSize = Math.round(R * 0.42);
+  orbCtx.textAlign = 'center';
+  orbCtx.textBaseline = 'middle';
+  orbCtx.font = '700 ' + fontSize + 'px "JetBrains Mono", monospace';
+  const width = orbCtx.measureText(text).width;
+  if (width > maxWidth) fontSize = Math.max(16, Math.floor(fontSize * (maxWidth / width)));
+  orbCtx.font = '700 ' + fontSize + 'px "JetBrains Mono", monospace';
+
+  orbCtx.save();
+  orbCtx.scale(pulseScale, pulseScale);
+
+  /* glowing outline, drawn first so the crisp fill sits on top of the glow */
+  orbCtx.shadowColor = 'rgba('+rgb+','+glowStrength+')';
+  orbCtx.shadowBlur = R * 0.16;
+  orbCtx.lineWidth = Math.max(1, R * 0.018);
+  orbCtx.strokeStyle = 'rgba('+rgb+',0.85)';
+  orbCtx.strokeText(text, 0, 0);
+
+  /* bright-to-accent vertical gradient fill, same idea as the core orb's
+     own white-to-accent radial gradient, just adapted to text */
+  orbCtx.shadowBlur = 0; /* keep the glow on the outline only — fill stays crisp/readable */
+  const half = fontSize * 0.6;
+  const grad = orbCtx.createLinearGradient(0, -half, 0, half);
+  grad.addColorStop(0, '#f6fcff');
+  grad.addColorStop(0.55, 'rgba('+rgb+',1)');
+  grad.addColorStop(1, 'rgba('+rgb+',0.8)');
+  orbCtx.fillStyle = grad;
+  orbCtx.fillText(text, 0, 0);
+
+  orbCtx.restore();
+}
+
 function renderOrb(){
   requestAnimationFrame(renderOrb);
   const w = orbCanvas.clientWidth, h = orbCanvas.clientHeight;
@@ -1430,25 +1469,22 @@ function renderOrb(){
   orbCtx.fillStyle = core;
   orbCtx.beginPath(); orbCtx.arc(0,0,coreR,0,Math.PI*2); orbCtx.fill();
 
-  /* timer countdown / completion text — same telemetry font as the HUD,
-     no new color scheme, just drawn over the existing core orb glow */
+  /* timer countdown / completion text — reuses whatever accent color is
+     already driving this state's orb (cyan for active, the same amber
+     already used for THINKING for completion) so the digits are always
+     in sync with the orb rather than a separate hardcoded palette. See
+     drawTimerDigits() below for the gradient/outline/glow treatment. */
   if (st === 'TIMER_ACTIVE'){
     const remainingMs = timerEndAt - Date.now();
     if (remainingMs <= 0){
       completeTimer();
     } else {
-      orbCtx.fillStyle = '#eaf6ff';
-      orbCtx.font = '600 ' + Math.round(R*0.42) + 'px "JetBrains Mono", monospace';
-      orbCtx.textAlign = 'center';
-      orbCtx.textBaseline = 'middle';
-      orbCtx.fillText(formatDuration(remainingMs), 0, 0);
+      const pulse = 1 + Math.sin(idlePhase*1.2) * 0.015 * motionScale;
+      drawTimerDigits(formatDuration(remainingMs), color, 0.6, pulse, R);
     }
   } else if (st === 'TIMER_COMPLETE'){
-    orbCtx.fillStyle = '#eaf6ff';
-    orbCtx.font = '600 ' + Math.round(R*0.42) + 'px "JetBrains Mono", monospace';
-    orbCtx.textAlign = 'center';
-    orbCtx.textBaseline = 'middle';
-    orbCtx.fillText('00:00', 0, 0);
+    const pulse = 1 + Math.sin(idlePhase*4) * 0.05 * motionScale;
+    drawTimerDigits('00:00', color, 0.9, pulse, R);
   }
 
   /* vision scan line */
