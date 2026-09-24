@@ -784,11 +784,15 @@ async function handleUtterance(rawText){
 
 /* ============================================================
    Voice: speech recognition (STT)
+   Migrated from the browser's built-in SpeechRecognition /
+   webkitSpeechRecognition to Deepgram streaming STT:
+   mic -> MediaRecorder -> WebSocket (/ws/stt) -> server.js -> Deepgram.
    ============================================================ */
-const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null, micOn = false, continuousMode = false, recognitionActive = false, heardTimer = null;
+const sttSupported = !!(window.MediaRecorder && window.WebSocket);
+let micOn = false, continuousMode = false, heardTimer = null;
 let micStream = null, micCtx = null, micAnalyser = null, micData = null;
 let lastRecErrorAt = 0;
+let mediaRecorder = null, sttSocket = null, finalBuffer = '';
 
 /* Browsers pick the recognition language up front — there's no "detect
    what language is being spoken" mode — so this is a small, explicit
@@ -802,7 +806,7 @@ function armHeardWatchdog(){
   }, 9000);
 }
 
-/* Avoids flooding the banner if recognition keeps failing and
+/* Avoids flooding the banner if the STT connection keeps failing and
    auto-restarting in a tight loop (e.g. no internet for a while). */
 function showRecErrorThrottled(msg){
   const now = Date.now();
@@ -812,61 +816,92 @@ function showRecErrorThrottled(msg){
   }
 }
 
-function initRecognition(){
-  if (!SpeechRecognitionImpl) return null;
-  const r = new SpeechRecognitionImpl();
-  r.lang = recognitionLang;
-  r.continuous = true;
-  r.interimResults = true;
-  r.onstart = () => { recognitionActive = true; armHeardWatchdog(); };
-  r.onresult = (ev) => {
+/* MediaRecorder's supported MIME types vary by browser — check rather
+   than assume. Every candidate here is a containerized format, so
+   Deepgram auto-detects encoding/sample rate from the container header
+   and the server doesn't need to pass those as query params. */
+function pickMimeType(){
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  for (const c of candidates){
+    if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return '';
+}
+
+/* Opens the browser<->server STT WebSocket and, once it's open, starts
+   MediaRecorder streaming audio chunks into it. Reconnects automatically
+   while the mic is meant to be on, mirroring the old SpeechRecognition
+   auto-restart-on-onend behavior. */
+function connectSTT(){
+  const mimeType = pickMimeType();
+  if (!mimeType){
+    setState('ERROR', {message:'No supported audio recording format was found in this browser.'});
+    stopMic();
+    return;
+  }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  sttSocket = new WebSocket(proto + '//' + location.host + '/ws/stt?lang=' + encodeURIComponent(recognitionLang));
+
+  sttSocket.onopen = () => {
+    armHeardWatchdog();
+    try {
+      mediaRecorder = new MediaRecorder(micStream, { mimeType });
+    } catch(_e){
+      showRecErrorThrottled('Could not start audio recording.');
+      stopMic();
+      return;
+    }
+    mediaRecorder.ondataavailable = (ev) => {
+      if (ev.data && ev.data.size > 0 && sttSocket && sttSocket.readyState === WebSocket.OPEN) sttSocket.send(ev.data);
+    };
+    mediaRecorder.onerror = () => showRecErrorThrottled('Audio recording hit a problem.');
+    try { mediaRecorder.start(250); } catch(_e){
+      showRecErrorThrottled('Could not start audio recording.');
+      stopMic();
+    }
+  };
+
+  sttSocket.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch(_e) { return; }
+    if (msg.type === 'error'){
+      showRecErrorThrottled(msg.message || 'Speech recognition hit a problem.');
+      stopMic();
+      return;
+    }
+    if (msg.type !== 'transcript') return;
     clearTimeout(heardTimer);
-    let interim = '', final = '';
-    for (let i = ev.resultIndex; i < ev.results.length; i++){
-      const t = ev.results[i][0].transcript;
-      if (ev.results[i].isFinal) final += t; else interim += t;
-    }
-    interimEl.textContent = interim;
-    if (final.trim()){
+    if (msg.isFinal && msg.text) finalBuffer = (finalBuffer ? finalBuffer + ' ' : '') + msg.text;
+    interimEl.textContent = msg.isFinal ? finalBuffer : (finalBuffer ? finalBuffer + ' ' + msg.text : msg.text);
+    /* speechFinal marks the end of an utterance (Deepgram's endpointing
+       detected a pause) — that's what should trigger handleUtterance(),
+       exactly once, the same way a final SpeechRecognition result did. */
+    if (msg.speechFinal){
+      const toSend = finalBuffer.trim();
+      finalBuffer = '';
       interimEl.textContent = '';
-      handleUtterance(final);
-    } else {
-      armHeardWatchdog();
+      if (toSend) handleUtterance(toSend);
     }
+    armHeardWatchdog();
   };
-  r.onerror = (ev) => {
-    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
-      micOn = false; continuousMode = false; recognitionActive = false;
-      setState('ERROR', {message:"Microphone access was denied. Allow it in the browser's site settings to talk to ARIA."});
-      updateMicUI();
-    } else if (ev.error === 'audio-capture'){
-      /* no working mic hardware reachable — retrying won't help */
-      micOn = false; continuousMode = false; recognitionActive = false;
-      setState('ERROR', {message:"No microphone was found, or it's in use by another app."});
-      updateMicUI();
-    } else if (ev.error === 'no-speech' || ev.error === 'aborted'){
-      /* benign — onend decides whether to restart */
-    } else if (ev.error === 'network'){
-      showRecErrorThrottled('Speech recognition needs network access to reach the recognition service.');
-    } else {
-      showRecErrorThrottled('Speech recognition hit a problem (' + ev.error + ').');
-    }
+
+  sttSocket.onerror = () => {
+    showRecErrorThrottled('Speech recognition needs network access to reach the recognition service.');
   };
-  r.onend = () => {
-    recognitionActive = false;
+
+  sttSocket.onclose = () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive'){ try { mediaRecorder.stop(); } catch(_e){} }
+    mediaRecorder = null;
     if (micOn && continuousMode){
-      /* small delay avoids the InvalidStateError some mobile browsers throw
-         when start() is called again in the same tick as onend */
-      setTimeout(() => { if (micOn && continuousMode && !recognitionActive){ try { r.start(); } catch(_e){} } }, 200);
+      /* small delay avoids hammering a socket that's failing to connect */
+      setTimeout(() => { if (micOn && continuousMode) connectSTT(); }, 200);
     } else if (State.current === 'LISTENING') setState(restState());
   };
-  return r;
 }
 
 function setRecognitionLang(lang){
   if (micOn){ showBanner('Stop the mic first to switch language.'); return; }
   recognitionLang = lang;
-  if (recognition) recognition.lang = lang;
   updateLangUI();
 }
 function updateLangUI(){
@@ -874,40 +909,36 @@ function updateLangUI(){
 }
 
 async function startMic(){
-  if (!SpeechRecognitionImpl){
-    setState('ERROR', {message:"This browser doesn't support speech recognition — use the keyboard instead."});
+  if (!sttSupported){
+    setState('ERROR', {message:"This browser doesn't support the microphone streaming needed for voice input — use the keyboard instead."});
     textForm.hidden = false;
     return;
   }
   if (micOn) return;
-  if (!recognition) recognition = initRecognition();
-  recognition.lang = recognitionLang;
-  micOn = true; continuousMode = true;
+  micOn = true; continuousMode = true; finalBuffer = '';
+  /* Unlike the old SpeechRecognition (which managed its own mic access
+     internally), MediaRecorder needs the stream handed to it directly, so
+     this is now required up front rather than best-effort. */
   try {
-    recognition.start();
+    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
   } catch(_e){
     micOn = false; continuousMode = false;
-    setState('ERROR', {message:'Could not start speech recognition — try again.'});
+    setState('ERROR', {message:"Microphone access was denied. Allow it in the browser's site settings to talk to ARIA."});
     updateMicUI();
     return;
   }
+  setupAnalyser(micStream);
   setState('LISTENING');
   updateMicUI();
-  /* Best-effort only: a separate raw stream purely to drive the orb's
-     amplitude visualization. This is NOT required for recognition itself
-     (SpeechRecognition manages its own mic access), so its failure must
-     never block or undo the mic toggle above — that coupling was the
-     original bug where a denied/insecure-context getUserMedia call
-     silently prevented recognition.start() from ever running. */
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
-    setupAnalyser(micStream);
-  } catch(_e){ /* orb falls back to a generic listening pulse; STT still works */ }
+  connectSTT();
 }
 function stopMic(){
   micOn = false; continuousMode = false;
   clearTimeout(heardTimer);
-  if (recognition){ try { recognition.stop(); } catch(_e){} }
+  finalBuffer = '';
+  if (mediaRecorder && mediaRecorder.state !== 'inactive'){ try { mediaRecorder.stop(); } catch(_e){} }
+  mediaRecorder = null;
+  if (sttSocket){ try { sttSocket.close(); } catch(_e){} sttSocket = null; }
   if (micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream = null; }
   teardownAnalyser();
   updateMicUI();
@@ -1604,10 +1635,13 @@ window.addEventListener('beforeunload', () => {
     return;
   }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    /* the new STT pipeline needs getUserMedia directly (MediaRecorder
+       captures the stream itself, unlike the old SpeechRecognition). */
     btnCam.disabled = true; btnCam.title = 'Camera not supported in this browser.';
+    btnMic.disabled = true; btnMic.title = 'Microphone not supported in this browser.';
   }
-  if (!SpeechRecognitionImpl){
-    btnMic.title = 'Speech recognition not supported here — use the keyboard.';
+  if (!sttSupported){
+    btnMic.title = 'Voice input not supported here — use the keyboard.';
   }
 })();
 
