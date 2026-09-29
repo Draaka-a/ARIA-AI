@@ -4,6 +4,7 @@ require('dotenv').config();
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const http = require('http');
 const WebSocket = require('ws');
 
@@ -35,6 +36,37 @@ app.get('/api/health', (req, res) => {
   const name = process.env.AI_PROVIDER || 'anthropic';
   const configured = typeof provider.isConfigured === 'function' ? provider.isConfigured() : true;
   res.json({ ok: true, provider: name, configured });
+});
+
+/* ============================================================
+   Music Player track list. Lists the audio files in public/assets/ so
+   dropping a new song into that folder is all it takes — no code change,
+   no rebuild. Purely a directory listing: the audio itself is streamed by
+   express.static above (with Range support, so seeking works), and aria.html
+   never needs to know the file names in advance.
+   Symlinks are included on purpose (Termux users often link ~/storage/music).
+   ============================================================ */
+const ASSETS_DIR = path.join(__dirname, 'public', 'assets');
+const AUDIO_EXT = /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i;
+try { fs.mkdirSync(ASSETS_DIR, { recursive: true }); } catch (_e) { /* read-only fs: /api/music just returns [] */ }
+
+async function listTracks() {
+  const entries = await fs.promises.readdir(ASSETS_DIR, { withFileTypes: true });
+  return entries
+    .filter((e) => (e.isFile() || e.isSymbolicLink()) && !e.name.startsWith('.') && AUDIO_EXT.test(e.name))
+    .map((e) => e.name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    .map((file) => ({ file, url: '/assets/' + encodeURIComponent(file) }));
+}
+
+app.get('/api/music', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store'); // re-scanned every time the player opens
+    res.json({ tracks: await listTracks() });
+  } catch (e) {
+    console.error('[api/music]', e.message);
+    res.json({ tracks: [] });
+  }
 });
 
 /* Matches backendChat() in aria.html: { message, history } -> { text } */
@@ -176,5 +208,6 @@ const PORT = process.env.PORT || 8000;
 server.listen(PORT, () => {
   console.log('ARIA backend running — open http://localhost:' + PORT + '/aria.html');
   console.log('AI provider: ' + (process.env.AI_PROVIDER || 'anthropic'));
+  listTracks().then((t) => console.log('Music: ' + t.length + ' track(s) in public/assets/')).catch(() => {});
   console.log('STT provider: Deepgram' + (DEEPGRAM_API_KEY ? ' (' + DEEPGRAM_MODEL + ')' : ' — DEEPGRAM_API_KEY not set, mic will not work'));
 });

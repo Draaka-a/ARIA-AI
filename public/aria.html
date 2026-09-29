@@ -273,6 +273,191 @@
     color:#03121a;cursor:pointer;
   }
 
+  /* ---------- Music player (MUSIC state) ----------
+     The orb itself is the hero: in MUSIC state it morphs into a music note
+     (see renderOrb) and slides/shrinks up to make room, exactly like the timer
+     display takes over the orb. The panel below is just the controls. */
+  #orb-canvas{transition:transform .7s cubic-bezier(.22,.8,.24,1);}
+  body.music-layout #orb-canvas{
+    transform:translate(var(--mp-dx,0px),var(--mp-dy,0px)) scale(var(--mp-scale,1));
+  }
+  .transcript-wrap{transition:bottom .5s cubic-bezier(.22,.8,.24,1);}
+  .cam-controls{transition:opacity .3s, bottom .5s cubic-bezier(.22,.8,.24,1);}
+  body.music-layout:not(.music-side) .transcript-wrap,
+  body.music-layout:not(.music-side) .cam-controls{bottom:var(--mp-tb,150px);}
+  body[data-state="MUSIC"] .hud-mode{color:var(--cyan-solid);}
+
+  .music-panel{
+    position:absolute;z-index:10;
+    left:50%;bottom:10px;
+    width:min(calc(100% - 24px),400px);
+    padding:10px 14px 12px;
+    display:flex;flex-direction:column;gap:5px;
+    background:rgba(7,12,22,0.74);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    overflow-x:hidden;overflow-y:auto;   /* vertical scroll only kicks in on very short screens */
+    overscroll-behavior:contain;
+    opacity:0;visibility:hidden;pointer-events:none;
+    transform:translate(-50%,14px);
+    transition:opacity .28s ease, transform .28s ease, visibility 0s linear .28s;
+  }
+  .music-panel::before{  /* thin HUD accent line along the top edge */
+    content:"";position:absolute;left:14px;right:14px;top:0;height:1px;
+    background:linear-gradient(90deg,transparent,rgba(var(--cyan),0.7),transparent);
+  }
+  /* controls appear a beat AFTER the orb starts morphing (open), and leave
+     BEFORE it morphs back (close — JS delays the state change to match) */
+  body.music-open .music-panel{
+    opacity:1;visibility:visible;pointer-events:auto;
+    transform:translate(-50%,0);
+    transition:opacity .4s ease .35s, transform .4s ease .35s, visibility 0s linear .35s;
+  }
+  body.music-side .music-panel{
+    left:auto;right:12px;top:50%;bottom:auto;
+    width:min(360px,46%);
+    transform:translate(0,calc(-50% + 14px));
+  }
+  body.music-side.music-open .music-panel{transform:translate(0,-50%);}
+
+  .mp-head{
+    display:flex;align-items:center;gap:8px;
+    font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:.16em;color:var(--ink-dim);
+  }
+  .mp-tag{color:var(--ink);font-weight:600;}
+  .mp-count{margin-left:auto;}
+  .mp-close{
+    width:32px;height:32px;margin:-6px -8px -6px 0;flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;
+    background:none;border:none;border-radius:50%;color:var(--ink-dim);cursor:pointer;padding:0;
+    transition:color .2s, background .2s;
+  }
+  .mp-close:hover{color:var(--ink);background:rgba(79,216,255,0.08);}
+  .mp-close svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;}
+
+  .mp-meta{min-width:0;padding-top:2px;}
+  .mp-title{
+    font-size:15px;font-weight:600;letter-spacing:.02em;color:var(--ink);line-height:1.35;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .mp-sub{
+    font-size:11.5px;color:var(--ink-dim);line-height:1.4;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    transition:color .25s;
+  }
+  .mp-sub.err{color:var(--rose-solid);}
+
+  .mp-seek{display:flex;align-items:center;gap:9px;}
+  .mp-time{
+    flex:0 0 auto;min-width:38px;
+    font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:.04em;color:var(--ink-dim);
+  }
+  .mp-time:last-child{text-align:right;}
+
+  .mp-range{
+    -webkit-appearance:none;appearance:none;
+    flex:1 1 auto;min-width:0;width:100%;
+    height:28px;margin:0;padding:0;
+    background:transparent;cursor:pointer;outline:none;
+    touch-action:none;
+    --p:0%;
+  }
+  .mp-range::-webkit-slider-runnable-track{
+    height:3px;border-radius:2px;
+    background:linear-gradient(to right,var(--cyan-solid) var(--p),rgba(120,196,255,0.18) var(--p));
+  }
+  .mp-range::-moz-range-track{height:3px;border-radius:2px;background:rgba(120,196,255,0.18);}
+  .mp-range::-moz-range-progress{height:3px;border-radius:2px;background:var(--cyan-solid);}
+  .mp-range::-webkit-slider-thumb{
+    -webkit-appearance:none;appearance:none;
+    width:12px;height:12px;margin-top:-4.5px;border-radius:50%;
+    background:#eaf8ff;border:1px solid var(--cyan-solid);
+    box-shadow:0 0 8px rgba(var(--cyan),0.55);
+  }
+  .mp-range::-moz-range-thumb{
+    width:10px;height:10px;border-radius:50%;
+    background:#eaf8ff;border:1px solid var(--cyan-solid);
+    box-shadow:0 0 8px rgba(var(--cyan),0.55);
+  }
+  .mp-range:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px rgba(var(--cyan),0.35);}
+  .mp-range:focus-visible::-moz-range-thumb{box-shadow:0 0 0 3px rgba(var(--cyan),0.35);}
+  .mp-range:disabled{opacity:.4;cursor:default;}
+
+  .mp-transport{display:flex;align-items:center;justify-content:space-between;padding:1px 2px 0;}
+  .mp-btn{
+    position:relative;flex:0 0 auto;
+    width:42px;height:42px;border-radius:50%;padding:0;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(79,216,255,0.05);
+    border:1px solid var(--line);
+    color:var(--ink);cursor:pointer;
+    transition:background .2s, border-color .2s, color .2s, transform .15s, box-shadow .2s;
+  }
+  .mp-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+  .mp-btn .fill{fill:currentColor;}
+  .mp-btn:hover{border-color:var(--line-strong);}
+  .mp-btn:active{transform:scale(0.92);}
+  .mp-btn:focus-visible,.mp-close:focus-visible{outline:2px solid rgba(var(--cyan),0.6);outline-offset:2px;}
+  .mp-btn:disabled{opacity:.35;cursor:not-allowed;}
+  .mp-btn.step{width:46px;height:46px;}
+  .mp-btn.main{
+    width:56px;height:56px;border-color:var(--line-strong);
+    background:rgba(79,216,255,0.1);box-shadow:0 0 14px rgba(var(--cyan),0.12);
+  }
+  .mp-btn.main svg{width:22px;height:22px;}
+  .mp-btn.toggle{color:var(--ink-dim);}
+  .mp-btn.toggle.on{color:var(--amber-solid);border-color:rgba(var(--amber),0.45);background:rgba(var(--amber),0.08);}
+  #mp-play .i-pause{display:none;}
+  #mp-play.is-playing .i-play{display:none;}
+  #mp-play.is-playing .i-pause{display:inline;}
+  #mp-repeat .one{display:none;}
+  #mp-repeat[data-mode="one"] .one{display:inline;}
+  .mp-btn.mini{width:36px;height:36px;border-color:transparent;background:none;color:var(--ink-dim);}
+  .mp-btn.mini svg{width:17px;height:17px;}
+  #mp-mute .slash{display:none;}
+  #mp-mute.muted .slash{display:inline;}
+  #mp-mute.muted .wave{opacity:.25;}
+
+  .mp-vol{display:flex;align-items:center;gap:6px;}
+  .mp-vol .mp-range{min-width:56px;}
+  .mp-timer{
+    flex:0 0 auto;display:flex;align-items:center;gap:5px;
+    font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:.05em;color:var(--ink-dim);
+    padding:3px 9px;border:1px solid var(--line);border-radius:999px;
+  }
+  .mp-timer[hidden]{display:none;}
+  .mp-timer svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;}
+
+  /* while the player is open, the last spoken/typed line fades out after a few
+     seconds so it stops covering the orb (it re-appears with every new line) */
+  @keyframes mpLineFade{to{opacity:0;}}
+  body.music-layout #transcript .line{animation:lineIn .28s ease-out, mpLineFade .7s ease 5s forwards;}
+
+  /* short screens (phone in landscape): compact controls so everything fits */
+  @media (max-height:420px){
+    body.music-side .mp-head{display:none;}      /* the footer note button / "close music player" still close it */
+    body.music-side .music-panel{padding:7px 12px 8px;gap:1px;}
+    body.music-side .mp-title{font-size:14px;}
+    body.music-side .mp-range{height:22px;}
+    body.music-side .mp-btn{width:34px;height:34px;}
+    body.music-side .mp-btn.step{width:38px;height:38px;}
+    body.music-side .mp-btn.main{width:44px;height:44px;}
+    body.music-side .mp-btn.mini{width:30px;height:30px;}
+  }
+  @media (max-width:360px){
+    .music-panel{padding:9px 12px 10px;}
+    .mp-btn{width:38px;height:38px;}
+    .mp-btn.step{width:42px;height:42px;}
+    .mp-btn.main{width:52px;height:52px;}
+    .mp-btn.mini{width:34px;height:34px;}
+    .mp-seek{gap:7px;}
+    .mp-time{min-width:34px;}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .music-panel,#orb-canvas,.transcript-wrap,.cam-controls{transition-duration:.01ms !important;transition-delay:0s !important;}
+  }
+
   ::selection{background:rgba(79,216,255,0.3);}
 
   @media (max-width:480px){
@@ -311,6 +496,57 @@
     </div>
 
     <div id="banner" hidden></div>
+
+    <section class="music-panel" id="music-panel" aria-label="Music player" aria-hidden="true">
+      <div class="mp-head">
+        <span class="hud-dot" id="mp-dot"></span>
+        <span class="mp-tag">MUSIC</span>
+        <span class="mp-count" id="mp-count">00 / 00</span>
+        <button class="mp-close" id="mp-close" type="button" title="Close music player" aria-label="Close music player">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+
+      <div class="mp-meta">
+        <div class="mp-title" id="mp-title">Scanning…</div>
+        <div class="mp-sub" id="mp-sub"></div>
+      </div>
+
+      <div class="mp-seek">
+        <span class="mp-time" id="mp-cur">00:00</span>
+        <input class="mp-range" id="mp-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Seek" disabled>
+        <span class="mp-time" id="mp-dur">00:00</span>
+      </div>
+
+      <div class="mp-transport">
+        <button class="mp-btn toggle" id="mp-shuffle" type="button" title="Shuffle" aria-label="Shuffle" aria-pressed="false">
+          <svg viewBox="0 0 24 24"><path d="M3 7h3.2c1.9 0 3.1.9 4.2 2.6l2.2 3.8c1.1 1.7 2.3 2.6 4.2 2.6H21"/><path d="M3 17h3.2c1.4 0 2.4-.5 3.3-1.4"/><path d="M13.2 8.6c1-.9 2.1-1.6 3.6-1.6H21"/><path d="M18.5 4.5 21 7l-2.5 2.5"/><path d="M18.5 14.5 21 17l-2.5 2.5"/></svg>
+        </button>
+        <button class="mp-btn step" id="mp-prev" type="button" title="Previous track" aria-label="Previous track">
+          <svg viewBox="0 0 24 24"><path d="M6.5 5.5v13"/><path class="fill" d="M19 6v12l-9-6z"/></svg>
+        </button>
+        <button class="mp-btn main" id="mp-play" type="button" title="Play" aria-label="Play">
+          <svg viewBox="0 0 24 24"><path class="i-play fill" d="M8 5.5v13l11-6.5z"/><g class="i-pause fill"><rect x="6.5" y="5.5" width="3.8" height="13" rx="1"/><rect x="13.7" y="5.5" width="3.8" height="13" rx="1"/></g></svg>
+        </button>
+        <button class="mp-btn step" id="mp-next" type="button" title="Next track" aria-label="Next track">
+          <svg viewBox="0 0 24 24"><path d="M17.5 5.5v13"/><path class="fill" d="M5 6v12l9-6z"/></svg>
+        </button>
+        <button class="mp-btn toggle" id="mp-repeat" type="button" title="Repeat: off" aria-label="Repeat: off" data-mode="off">
+          <svg viewBox="0 0 24 24"><path d="M17 3l3 3-3 3"/><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H20"/><path d="M7 21l-3-3 3-3"/><path d="M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H4"/><path class="one" d="M10.6 10.6 12 9.6v5.2"/></svg>
+        </button>
+      </div>
+
+      <div class="mp-vol">
+        <button class="mp-btn mini" id="mp-mute" type="button" title="Mute" aria-label="Mute">
+          <svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path class="wave" d="M15.2 9.3a3.7 3.7 0 0 1 0 5.4"/><path class="wave" d="M17.8 6.8a7.2 7.2 0 0 1 0 10.4"/><path class="slash" d="M15.5 9.5l5 5M20.5 9.5l-5 5"/></svg>
+        </button>
+        <input class="mp-range" id="mp-volume" type="range" min="0" max="100" step="1" value="80" aria-label="Volume">
+        <span class="mp-timer" id="mp-timer" hidden title="Timer still running">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3 1.8"/></svg>
+          <span id="mp-timer-txt">00:00</span>
+        </span>
+      </div>
+    </section>
   </main>
 
   <div class="transcript-wrap">
@@ -354,6 +590,9 @@
     <button class="icon-btn" id="btn-cam" title="Toggle camera" aria-pressed="false">
       <svg viewBox="0 0 24 24" stroke-width="1.7"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.4"/></svg>
     </button>
+    <button class="icon-btn" id="btn-music" title="Music player" aria-pressed="false">
+      <svg viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>
+    </button>
   </footer>
 
   <footer class="hud hud-bottom">
@@ -386,6 +625,7 @@ const lblMode = $('lbl-mode'), lblClock = $('lbl-clock'), lblConn = $('lbl-conn'
 const dotConn = $('dot-conn'), dotMic = $('dot-mic'), dotCam = $('dot-cam'), dotAi = $('dot-ai');
 const lblAiStatus = $('lbl-ai-status');
 const btnMic = $('btn-mic'), btnCam = $('btn-cam'), btnKeyboard = $('btn-keyboard');
+const btnMusic = $('btn-music');
 const langToggleEl = $('btn-lang-toggle');
 const camControls = $('cam-controls');
 const btnSwitchCam = $('btn-switch-cam'), btnSnap = $('btn-snap'), btnHand = $('btn-hand');
@@ -399,6 +639,7 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matc
    ============================================================ */
 const State = { current: 'IDLE' };
 function restState(){
+  if (musicActive) return 'MUSIC';   /* explicit mode — the mic stays on underneath so voice control keeps working */
   if (micOn) return 'LISTENING';
   if (camOn) return 'CAMERA';
   if (timerActive) return 'TIMER_ACTIVE';
@@ -645,6 +886,42 @@ function normalizeCommand(text){
     .trim();
 }
 
+/* ---- Music-player voice commands ----
+   Checked first in matchIntent(), still before any AI call. Every pattern
+   needs a music word (music / song / track / player …) or — for the bare
+   words handled in matchMusicIntent — the player to be open, so none of them
+   can steal an existing camera / timer / zoom phrase ("go back", "stop",
+   "silence" … all behave exactly as before). English plus a few Indonesian
+   equivalents, since the mic language toggle defaults to ID on Indonesian devices. */
+const MUSIC_INTENTS = [
+  {re:/\b(close|exit|quit|hide|shut|stop|turn off)\b.*\b(music|songs?|player)\b|\b(tutup|matikan|hentikan)\b.*\b(musik|music|lagu|pemutar|player)\b/i, action:'MUSIC_CLOSE'},
+  {re:/\b(next|skip)\b.*\b(songs?|tracks?|music)\b|\bplay (the )?next\b|\bskip this\b|\b(lagu|musik)\b.*\b(berikutnya|selanjutnya)\b|\bganti lagu\b|\bskip lagu\b/i, action:'MUSIC_NEXT'},
+  {re:/\b(previous|prev|last|back)\b.*\b(songs?|tracks?)\b|\bplay (the )?(previous|last)\b|\blagu\b.*\bsebelumnya\b|\bkembali ke lagu\b/i, action:'MUSIC_PREV'},
+  {re:/\bpause\b.*\b(music|songs?|tracks?|player|playback)\b|\b(jeda|pause)\b.*\b(musik|lagu)\b/i, action:'MUSIC_PAUSE'},
+  {re:/\b(resume|continue|unpause)\b.*\b(music|songs?|tracks?|playing|player|playback)\b|\b(lanjutkan|teruskan)\b.*\b(musik|lagu)\b/i, action:'MUSIC_RESUME'},
+  {re:/\b(open|launch|show|activate|turn on|start)\b.*\b(music player|music mode|player)\b|\b(open|launch|show|activate)\b.*\b(music|songs)\b|\b(buka|bukakan|aktifkan|tampilkan)\b.*\b(musik|music|pemutar|player)\b/i, action:'MUSIC_OPEN'},
+  {re:/\b(play|start|put on|turn on)\b.*\b(music|songs?|tracks?|playlist)\b|\bplay something\b|\b(putar|putarkan|mainkan|setel|setelkan|nyalakan)\b.*\b(musik|lagu)\b/i, action:'MUSIC_PLAY'},
+  {re:/\bshuffle\b.*\b(music|songs?|tracks?|playlist|queue)\b|\b(music|songs?|tracks?|playlist)\b.*\bshuffle\b|\bacak\b.*\b(lagu|musik)\b/i, action:'MUSIC_SHUFFLE'},
+  {re:/\b(repeat|loop)\b.*\b(this|the|that)?\s*(songs?|tracks?|music|playlist|queue)\b|\bulangi\b.*\b(lagu|musik)\b/i, action:'MUSIC_REPEAT'},
+  {re:/\bvolume\b.*\b(music|songs?)\b|\b(music|songs?)\b.*\bvolume\b|\b(naikkan|turunkan|kecilkan|besarkan)\b.*\bvolume\b/i, action:'MUSIC_VOLUME'},
+];
+function matchMusicIntent(text){
+  for (const i of MUSIC_INTENTS) if (i.re.test(text)) return i.action;
+  if (!musicActive) return null;
+  /* with the player open, the bare words work too ("pause", "next", "volume up"…) */
+  const bare = {
+    'pause':'MUSIC_PAUSE', 'resume':'MUSIC_RESUME', 'play':'MUSIC_RESUME', 'continue':'MUSIC_RESUME',
+    'next':'MUSIC_NEXT', 'skip':'MUSIC_NEXT', 'next song':'MUSIC_NEXT', 'next track':'MUSIC_NEXT',
+    'previous':'MUSIC_PREV', 'previous song':'MUSIC_PREV', 'previous track':'MUSIC_PREV',
+    'mute':'MUSIC_VOLUME', 'unmute':'MUSIC_VOLUME', 'jeda':'MUSIC_PAUSE', 'lanjut':'MUSIC_RESUME'
+  }[text];
+  if (bare) return bare;
+  if (/\bshuffle\b/.test(text)) return 'MUSIC_SHUFFLE';
+  if (/^(repeat|loop)( (one|this song|this track|all|off|on|song|track|playlist))?$/.test(text) || /\b(stop|disable|turn off)\b.*\b(repeat|loop)(ing)?\b/.test(text)) return 'MUSIC_REPEAT';
+  if (/\bvolume\b|\b(louder|quieter)\b/.test(text)) return 'MUSIC_VOLUME';
+  return null;
+}
+
 const INTENTS = [
   {re:/\b(open|start|turn on|activate)\b.*\bcamera\b|\blook at this\b|\bcheck this out\b/i, action:'CAMERA_ON'},
   {re:/\b(close|stop|turn off)\b.*\bcamera\b|\bgo back\b/i, action:'CAMERA_OFF'},
@@ -662,6 +939,8 @@ const INTENTS = [
 ];
 function matchIntent(rawText){
   const text = normalizeCommand(rawText);
+  const musicAction = matchMusicIntent(text);
+  if (musicAction) return musicAction;
   /* Standalone toggle words are an intentional exception to the substring
      patterns below — checked as an exact match (not \bcamera\b anywhere)
      specifically so "I was testing the camera yesterday" does NOT trigger
@@ -681,6 +960,7 @@ function matchIntent(rawText){
    absolute target timestamp (timerEndAt - Date.now()), so it can't drift
    the way repeatedly decrementing a counter every ~1000ms can. */
 let timerActive = false;
+let musicActive = false;   /* Music Player mode flag (see MusicPlayer below) */
 let timerEndAt = 0;
 let timerTotalMs = 0;
 let timerCompleteTimeout = null;
@@ -716,7 +996,7 @@ function startTimerFromText(rawText){
   timerActive = true;
   timerTotalMs = seconds * 1000;
   timerEndAt = Date.now() + timerTotalMs;
-  setState('TIMER_ACTIVE');
+  setState(musicActive ? 'MUSIC' : 'TIMER_ACTIVE');   /* with the player open the orb stays a note; its panel shows the countdown */
   addTranscript('ai', (wasActive ? 'Replacing the current timer — now set for ' : 'Timer set for ') + formatDuration(seconds*1000) + '.');
 }
 function cancelTimer(){
@@ -757,6 +1037,12 @@ async function runAction(action, rawText){
     case 'MIC_OFF': stopMic(); break;
     case 'STOP_SPEAK': stopSpeaking(); setState(restState()); break;
     case 'STOP_ALL': stopSpeaking(); stopMic(); break;
+    case 'MUSIC_OPEN': case 'MUSIC_PLAY': case 'MUSIC_CLOSE': case 'MUSIC_PAUSE': case 'MUSIC_RESUME':
+    case 'MUSIC_NEXT': case 'MUSIC_PREV': case 'MUSIC_SHUFFLE': case 'MUSIC_REPEAT': case 'MUSIC_VOLUME': {
+      const msg = await MusicPlayer.voice(action, rawText);
+      if (msg) addTranscript('ai', msg);      /* transcript only — no TTS, so ARIA never talks over the music */
+      break;
+    }
   }
 }
 
@@ -928,7 +1214,7 @@ async function startMic(){
     return;
   }
   setupAnalyser(micStream);
-  setState('LISTENING');
+  setState(restState());   /* LISTENING — or MUSIC when the player is open */
   updateMicUI();
   connectSTT();
 }
@@ -1030,9 +1316,9 @@ function speak(text){
   if (voice) u.voice = voice;
   u.rate = 1.02;
   u.onboundary = () => { speakPulse = 1; };
-  u.onstart = () => { setState('SPEAKING'); };
-  u.onend = () => { setState(restState()); };
-  u.onerror = () => { setState(restState()); };
+  u.onstart = () => { MusicPlayer.duck(true); setState('SPEAKING'); };
+  u.onend = () => { MusicPlayer.duck(false); setState(restState()); };
+  u.onerror = () => { MusicPlayer.duck(false); setState(restState()); };
   window.speechSynthesis.speak(u);
 }
 function stopSpeaking(){ window.speechSynthesis.cancel(); }
@@ -1390,7 +1676,19 @@ function resizeOrb(){
 window.addEventListener('resize', resizeOrb);
 resizeOrb();
 
-let idlePhase = 0, ringAngle = 0, errorShake = 0, timerMorph = 0;
+let idlePhase = 0, ringAngle = 0, errorShake = 0;
+
+/* ---- Orb morph channels ----
+   One eased 0..1 value per "display" the orb can transform into (timer,
+   music). 0 = normal orb, 1 = fully in that mode. Each is eased toward its
+   target with the same +=(target-current)*factor smoothing, so entering AND
+   leaving a mode animate through the one value — no separate reverse
+   transition code. This is the mechanism the timer always used, just shared. */
+const orbMorph = { timer: 0, music: 0 };
+function easeOrbMorph(key, active){
+  orbMorph[key] += ((active ? 1 : 0) - orbMorph[key]) * 0.08;
+  return orbMorph[key];
+}
 const motionScale = reducedMotion ? 0.35 : 1;
 
 /* ---- Timer digit rendering ----
@@ -1432,6 +1730,42 @@ function drawTimerDigits(text, rgb, glowStrength, pulseScale, R){
   orbCtx.restore();
 }
 
+/* ---- Music note glyph ----
+   A vector eighth note (the shape of U+1D160), drawn as a path rather than as
+   text: most phone fonts have no glyph for that code point and would show an
+   empty box. Painted with the same treatment as drawTimerDigits — glowing
+   outline underneath, bright-to-accent gradient fill on top. Path units:
+   1 = R/2, origin at the glyph's visual centre. */
+const NOTE_PATH = (function(){
+  const p = new Path2D();
+  p.ellipse(-0.22, 0.44, 0.31, 0.22, -0.42, 0, Math.PI*2);               /* note head */
+  p.rect(0.03, -0.66, 0.095, 1.08);                                        /* stem */
+  const flag = new Path2D('M0.125 -0.66 C0.2 -0.44 0.56 -0.42 0.52 -0.02 C0.5 -0.2 0.36 -0.26 0.125 -0.3 Z');
+  p.addPath(flag);                                                         /* flag */
+  return p;
+})();
+function drawMusicNote(rgb, glowStrength, pulseScale, R){
+  const u = R * 0.5;
+  orbCtx.save();
+  orbCtx.scale(pulseScale, pulseScale);
+  orbCtx.translate(-0.13 * u, 0.02 * u);        /* optical centring: the head hangs left, the flag right */
+  orbCtx.scale(u, u);
+  orbCtx.lineJoin = 'round';
+  orbCtx.shadowColor = 'rgba('+rgb+','+glowStrength+')';
+  orbCtx.shadowBlur = R * 0.16;
+  orbCtx.lineWidth = Math.max(1, R * 0.018) / u;
+  orbCtx.strokeStyle = 'rgba('+rgb+',0.85)';
+  orbCtx.stroke(NOTE_PATH);
+  orbCtx.shadowBlur = 0;
+  const grad = orbCtx.createLinearGradient(0, -0.7, 0, 0.7);
+  grad.addColorStop(0, '#f6fcff');
+  grad.addColorStop(0.55, 'rgba('+rgb+',1)');
+  grad.addColorStop(1, 'rgba('+rgb+',0.8)');
+  orbCtx.fillStyle = grad;
+  orbCtx.fill(NOTE_PATH);
+  orbCtx.restore();
+}
+
 function renderOrb(){
   requestAnimationFrame(renderOrb);
   const w = orbCanvas.clientWidth, h = orbCanvas.clientHeight;
@@ -1441,6 +1775,7 @@ function renderOrb(){
 
   idlePhase += 0.018 * motionScale;
   const st = State.current;
+  MusicPlayer.frame(idlePhase);   /* audio levels + panel readouts (cheap when idle) */
   let amp = 0.5 + Math.sin(idlePhase) * 0.05 * motionScale;
   let color = '79,216,255';
   let ringSpeed = 0.35;
@@ -1451,6 +1786,7 @@ function renderOrb(){
   else if (st === 'VISION_ANALYSIS'){ color = '124,240,255'; amp = 0.55 + Math.sin(idlePhase*1.4)*0.05; ringSpeed = 0.8; }
   else if (st === 'TIMER_ACTIVE'){ amp = 0.55 + Math.sin(idlePhase*1.2)*0.04; ringSpeed = 0.25; }
   else if (st === 'TIMER_COMPLETE'){ color = '255,177,79'; amp = 0.6 + Math.sin(idlePhase*3)*0.05; ringSpeed = 1.2; }
+  else if (st === 'MUSIC'){ const mv = MusicPlayer.visual; amp = 0.55 + Math.sin(idlePhase*1.2)*0.04 + mv.level*0.1; ringSpeed = 0.2 + mv.playEase*0.45; }
   else if (st === 'ERROR'){ color = '255,84,112'; errorShake = Math.min(1, errorShake + 0.12); }
   if (st !== 'ERROR') errorShake *= 0.86;
 
@@ -1459,8 +1795,12 @@ function renderOrb(){
      already used for pinch-zoom elsewhere in this file, so entering AND
      leaving the timer state both animate through this one value — no
      separate "reverse transition" code path is needed. */
-  const timerTarget = (st === 'TIMER_ACTIVE' || st === 'TIMER_COMPLETE') ? 1 : 0;
-  timerMorph += (timerTarget - timerMorph) * 0.08;
+  const timerMorph = easeOrbMorph('timer', st === 'TIMER_ACTIVE' || st === 'TIMER_COMPLETE');
+  const musicMorph = easeOrbMorph('music', st === 'MUSIC');
+  /* the shared part of every morph: the orb's own glow / rings / hot core
+     step back so whichever display took over reads cleanly. Identical to the
+     old timer-only behavior whenever the music morph is 0. */
+  const modeMorph = Math.max(timerMorph, musicMorph);
 
   const shakeMag = errorShake * 6 * motionScale;
   const sx = (Math.random()-0.5) * shakeMag, sy = (Math.random()-0.5) * shakeMag;
@@ -1470,9 +1810,9 @@ function renderOrb(){
 
   /* outer glow — contracts and dims as the orb morphs toward the timer
      display, so its ambient bloom stops competing with the digits */
-  const glowR = R * (0.95 + amp*0.55) * (1 - timerMorph*0.4);
+  const glowR = R * (0.95 + amp*0.55) * (1 - modeMorph*0.4);
   const glow = orbCtx.createRadialGradient(0,0, R*0.15, 0,0, glowR);
-  glow.addColorStop(0, 'rgba('+color+','+(0.30*(1-timerMorph*0.5))+')');
+  glow.addColorStop(0, 'rgba('+color+','+(0.30*(1-modeMorph*0.5))+')');
   glow.addColorStop(1, 'rgba('+color+',0)');
   orbCtx.fillStyle = glow;
   orbCtx.beginPath(); orbCtx.arc(0,0,glowR,0,Math.PI*2); orbCtx.fill();
@@ -1484,7 +1824,7 @@ function renderOrb(){
     orbCtx.strokeStyle = 'rgba('+color+','+(0.55 - i*0.12)+')';
     orbCtx.beginPath();
     const dir = i % 2 ? 1 : -1;
-    orbCtx.arc(0,0, (R*0.8 - i*11) * (1 - timerMorph*0.08), ringAngle*dir + i*1.3, ringAngle*dir + i*1.3 + Math.PI*1.15);
+    orbCtx.arc(0,0, (R*0.8 - i*11) * (1 - modeMorph*0.08), ringAngle*dir + i*1.3, ringAngle*dir + i*1.3 + Math.PI*1.15);
     orbCtx.stroke();
   }
 
@@ -1505,10 +1845,11 @@ function renderOrb(){
   /* core orb — its bright white-hot center shrinks and dims as the orb
      morphs toward timer mode, since that hotspot sat directly behind the
      digits and was the main cause of them visually melting together */
-  const coreR = R * (0.32 + amp*0.3) * (1 - timerMorph*0.5);
+  const coreMorph = Math.max(timerMorph, musicMorph * 1.2);   /* the note sits right over the core: dim it a touch more */
+  const coreR = R * (0.32 + amp*0.3) * (1 - coreMorph*0.5);
   const core = orbCtx.createRadialGradient(-coreR*0.3,-coreR*0.3, coreR*0.08, 0,0, coreR);
-  core.addColorStop(0, 'rgba(255,255,255,'+(1 - timerMorph*0.55)+')');
-  core.addColorStop(0.4, 'rgba('+color+','+(0.92*(1-timerMorph*0.3))+')');
+  core.addColorStop(0, 'rgba(255,255,255,'+(1 - coreMorph*0.55)+')');
+  core.addColorStop(0.4, 'rgba('+color+','+(0.92*(1-coreMorph*0.3))+')');
   core.addColorStop(1, 'rgba('+color+',0.12)');
   orbCtx.fillStyle = core;
   orbCtx.beginPath(); orbCtx.arc(0,0,coreR,0,Math.PI*2); orbCtx.fill();
@@ -1569,6 +1910,56 @@ function renderOrb(){
     orbCtx.globalAlpha = 1;
   }
 
+  /* music display — same contract as the timer display above: a steady
+     boundary that doubles as a progress ring (track position), a small HUD
+     label, and the glyph (the note) in the state's accent colour. The ring of
+     ticks inside the boundary is the live audio level (real analyser data
+     where available). Everything fades with musicMorph, in and out. */
+  if (musicMorph > 0.02){
+    const mv = MusicPlayer.visual;
+    const boundaryR = R * 0.72;
+    const baseAlpha = 0.4 * musicMorph;
+    orbCtx.lineWidth = Math.max(1.5, R*0.012);
+    orbCtx.strokeStyle = 'rgba('+color+','+(baseAlpha*0.4)+')';
+    orbCtx.beginPath(); orbCtx.arc(0,0,boundaryR,0,Math.PI*2); orbCtx.stroke();
+    if (mv.progress > 0.001){
+      orbCtx.strokeStyle = 'rgba('+color+','+baseAlpha+')';
+      orbCtx.beginPath();
+      orbCtx.arc(0,0,boundaryR, -Math.PI/2, -Math.PI/2 + mv.progress*Math.PI*2);
+      orbCtx.stroke();
+    }
+
+    orbCtx.lineCap = 'round';
+    orbCtx.lineWidth = Math.max(1.4, R*0.012);
+    orbCtx.strokeStyle = 'rgba('+color+','+(0.55*musicMorph)+')';
+    const bars = mv.bars.length;
+    for (let i=0;i<bars;i++){
+      const a = (i/bars) * Math.PI * 2 - Math.PI/2;
+      const r1 = R*0.62, r2 = r1 + R*(0.012 + mv.bars[i]*0.085);
+      orbCtx.beginPath();
+      orbCtx.moveTo(Math.cos(a)*r1, Math.sin(a)*r1);
+      orbCtx.lineTo(Math.cos(a)*r2, Math.sin(a)*r2);
+      orbCtx.stroke();
+    }
+    orbCtx.lineCap = 'butt';
+
+    orbCtx.globalAlpha = musicMorph;
+    orbCtx.fillStyle = 'rgba(234,246,255,0.75)';
+    orbCtx.font = '600 ' + Math.max(10, Math.round(R*0.075)) + 'px "JetBrains Mono", monospace';
+    orbCtx.textAlign = 'center';
+    orbCtx.textBaseline = 'middle';
+    orbCtx.fillText(mv.label, 0, -R*0.5);
+
+    const notePulse = 1 + Math.sin(idlePhase*1.2) * 0.015 * motionScale + mv.level * 0.05;
+    orbCtx.globalAlpha = musicMorph * (0.72 + 0.28*mv.playEase);     /* settles a little dimmer while paused */
+    drawMusicNote(color, 0.6, notePulse, R);
+    orbCtx.globalAlpha = 1;
+  }
+
+  /* a timer that runs out while the music display is showing (which hides
+     the countdown digits) must still complete on time — same alert as ever */
+  if (st === 'MUSIC' && timerActive && Date.now() >= timerEndAt) completeTimer();
+
   /* vision scan line */
   if (st === 'VISION_ANALYSIS'){
     const scanY = ((idlePhase*70) % (R*2)) - R;
@@ -1582,12 +1973,838 @@ function renderOrb(){
 requestAnimationFrame(renderOrb);
 
 /* ============================================================
+   Music Player — a real application state (MUSIC), not an embedded widget.
+
+   How it plugs into ARIA (nothing here is a second state system):
+     • State:   `musicActive` is the mode flag (same idea as `timerActive`);
+                setState('MUSIC') is its rest state (see restState()).
+                Transient states — THINKING / SPEAKING / VISION_ANALYSIS /
+                TIMER_COMPLETE — still overlay it briefly, exactly like they
+                do over the timer, then restState() brings MUSIC back.
+     • Orb:     renderOrb() morphs the orb into a music note through the same
+                eased-morph mechanism the timer uses (see orbMorph).
+     • Voice:   MUSIC_INTENTS / matchMusicIntent() feed the normal
+                matchIntent() -> runAction() path, checked before any AI call.
+     • Timer:   never touched. timerEndAt is an absolute timestamp, so the
+                countdown keeps running underneath; the panel just shows a
+                small chip with the time left.
+     • Tracks:  public/assets/ is scanned via /api/music (server.js), with an
+                optional assets/playlist.json for plain static hosting.
+   ============================================================ */
+const MusicPlayer = (function(){
+  const AUDIO_EXT = /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus)$/i;
+  const BARS = 48;
+  const DUCK_GAIN = 0.3;            /* music level while ARIA is speaking */
+  const CLOSE_FADE_MS = 280;        /* controls fade out BEFORE the orb morphs back */
+  const LS_VOLUME = 'aria.music.volume';
+  const TRANSIENT = new Set(['THINKING','SPEAKING','VISION_ANALYSIS','TIMER_COMPLETE']);
+
+  const panel = $('music-panel');
+  const dotEl = $('mp-dot'), countEl = $('mp-count'), titleEl = $('mp-title'), subEl = $('mp-sub');
+  const seekEl = $('mp-seek'), curEl = $('mp-cur'), durEl = $('mp-dur');
+  const btnPlay = $('mp-play'), btnPrev = $('mp-prev'), btnNext = $('mp-next');
+  const btnShuffle = $('mp-shuffle'), btnRepeat = $('mp-repeat'), btnClose = $('mp-close');
+  const btnMute = $('mp-mute'), volEl = $('mp-volume');
+  const timerChip = $('mp-timer'), timerTxt = $('mp-timer-txt');
+  const appEl = $('app');
+
+  const audio = new Audio();
+  audio.preload = 'metadata';
+
+  let tracks = [];                  /* canonical queue, in file order */
+  let order = [];                   /* playback order: identity, or a shuffled permutation of it */
+  let pos = 0;                      /* position inside `order` */
+  let shuffleOn = false, repeatMode = 'off';    /* 'off' | 'all' | 'one' */
+  let volume = 0.8, muted = false, ducked = false, duckTimer = null;
+  let loadedFile = null, failedFile = null, wantPlay = false;
+  let errorStreak = 0, lastDir = 1;
+  let libState = 'idle';            /* idle | scanning | ready | empty */
+  let phase = 'idle';               /* idle | loading | playing | paused | error */
+  let seeking = false, closeTimer = null;
+  let statusMsg = '', statusErr = false, statusTimer = null;
+  let lastCurTxt = '', lastDurTxt = '', lastTimerTxt = '', lastDur = -1;
+
+  /* everything renderOrb() needs, refreshed once per frame by frame() */
+  const levels = new Float32Array(BARS);
+  const visual = { bars: levels, level: 0, progress: 0, playEase: 0, label: 'NO TRACKS' };
+
+  /* ---------- small helpers ---------- */
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const fmt = (sec) => formatDuration(Math.floor(sec || 0) * 1000);   /* reuse the timer's mm:ss / hh:mm:ss */
+  const current = () => tracks[order[pos]] || null;
+
+  try {
+    const v = parseFloat(localStorage.getItem(LS_VOLUME));
+    if (isFinite(v)) volume = clamp01(v);
+  } catch(_e){}
+
+  /* ---------- track names ----------
+     "my_favorite_song.mp3" -> "My Favorite Song"; "01 - Artist - Title.mp3"
+     -> artist "Artist", title "Title". Only ever a fallback for missing tags. */
+  function tidy(s){
+    s = (s || '').trim();
+    s = /\s/.test(s) ? s.replace(/_+/g, ' ') : s.replace(/[_-]+/g, ' ');
+    s = s.replace(/\s+/g, ' ').trim();
+    return s.split(' ').map((w) => (w && w === w.toLowerCase()) ? w.charAt(0).toUpperCase() + w.slice(1) : w).join(' ');
+  }
+  function guessFromFilename(file){
+    let name = file.replace(/\.[^.]+$/, '');
+    try { name = decodeURIComponent(name); } catch(_e){}
+    name = name.replace(/^\s*\d{1,3}\s*[-._)]\s+/, '');        /* leading track number */
+    let artist = '';
+    const m = name.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+    if (m){ artist = tidy(m[1]); name = m[2]; }
+    return { title: tidy(name) || tidy(file), artist };
+  }
+  function normalize(entry){
+    const e = typeof entry === 'string' ? { file: entry } : (entry || {});
+    const file = String(e.file || e.name || '').replace(/^.*[\\/]/, '');
+    if (!file || !AUDIO_EXT.test(file)) return null;
+    const guess = guessFromFilename(file);
+    return {
+      file,
+      /* always built from the file name (never a caller-supplied URL) so audio
+         stays same-origin — required for the level analyser to see the signal */
+      url: new URL('assets/' + encodeURIComponent(file), document.baseURI).href,
+      title: e.title || guess.title, artist: e.artist || guess.artist || '', album: e.album || '',
+      metaState: e.title ? 'done' : 'idle', broken: false
+    };
+  }
+
+  /* ---------- library discovery ---------- */
+  async function fetchLibrary(){
+    let list = null;
+    try {
+      const r = await fetch('/api/music', { cache: 'no-store' });
+      if (r.ok){ const d = await r.json(); if (d && Array.isArray(d.tracks)) list = d.tracks; }
+    } catch(_e){}
+    if (!list){       /* no Node server (static hosting) — optional manifest */
+      try {
+        const r = await fetch('assets/playlist.json', { cache: 'no-store' });
+        if (r.ok){ const d = await r.json(); list = Array.isArray(d) ? d : (d && d.tracks); }
+      } catch(_e){}
+    }
+    return Array.isArray(list) ? list : [];
+  }
+
+  async function refreshLibrary(){
+    libState = 'scanning'; syncUI();
+    const raw = await fetchLibrary();
+    const seen = new Set(), fresh = [];
+    for (const entry of raw){
+      const t = normalize(entry);
+      if (t && !seen.has(t.file)){ seen.add(t.file); fresh.push(t); }
+    }
+    /* keep tags already read for tracks that are still there */
+    const old = new Map(tracks.map((t) => [t.file, t]));
+    tracks = fresh.map((t) => {
+      const o = old.get(t.file);
+      return o && o.metaState === 'done' ? Object.assign(t, { title: o.title, artist: o.artist, album: o.album, metaState: 'done' }) : t;
+    });
+    libState = tracks.length ? 'ready' : 'empty';
+
+    const keep = loadedFile ? tracks.findIndex((t) => t.file === loadedFile) : -1;
+    if (!tracks.length){
+      wantPlay = false; audio.pause(); loadedFile = null; order = []; pos = 0;
+    } else if (keep >= 0){
+      buildOrder(keep);                    /* current song survives a rescan untouched */
+    } else {
+      wantPlay = false;                    /* what was loaded is gone — fall back to the first track, paused */
+      buildOrder(0);
+      loadAt(pos);
+    }
+    syncUI();
+  }
+
+  /* ---------- queue: order / shuffle ----------
+     `tracks` is never reordered. Shuffle only changes `order` (a permutation
+     of indices) with the current song pinned first, so turning it on or off
+     never interrupts or loses your place. */
+  function buildOrder(currentIdx){
+    order = tracks.map((_, i) => i);
+    if (shuffleOn && order.length > 1){
+      for (let i = order.length - 1; i > 0; i--){
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      const at = order.indexOf(currentIdx);
+      if (at > 0){ order.splice(at, 1); order.unshift(currentIdx); }
+    }
+    pos = Math.max(0, order.indexOf(currentIdx));
+  }
+  function reshuffle(){           /* new round (repeat-all + shuffle): don't open with the song that just ended */
+    const last = order[pos];
+    buildOrder(-1);
+    if (order.length > 1 && order[0] === last){ [order[0], order[1]] = [order[1], order[0]]; }
+    pos = 0;
+  }
+  function nextPos(dir, auto){    /* -> new position in `order`, or -1 when the queue is over */
+    const n = order.length;
+    let p = pos;
+    for (let i = 0; i < n; i++){
+      p += dir;
+      if (p >= n || p < 0){
+        if (dir > 0 && auto && repeatMode === 'off') return -1;
+        if (dir > 0 && shuffleOn && n > 1){ reshuffle(); p = 0; }
+        else p = dir > 0 ? 0 : n - 1;
+      }
+      if (!tracks[order[p]].broken) return p;
+    }
+    return p;                     /* every track is marked broken: let the error path report it */
+  }
+
+  /* ---------- loading & transport ---------- */
+  function loadAt(newPos){
+    if (!order.length) return;
+    pos = ((newPos % order.length) + order.length) % order.length;
+    const t = current();
+    loadedFile = t.file; failedFile = null; seeking = false;
+    setStatus('');
+    audio.src = t.url;
+    lastDur = -1;
+    readMetaLater(t);
+    updateMediaSession();
+    syncUI();
+  }
+  async function play(){
+    if (!tracks.length) return false;
+    if (loadedFile !== (current() || {}).file) loadAt(pos);
+    wantPlay = true; syncUI();
+    ensureAnalyser();
+    try {
+      await audio.play();
+      return true;
+    } catch(e){
+      if (e && e.name === 'NotAllowedError'){ wantPlay = false; setStatus('Tap play to start the audio.', 4000); }
+      else if (e && e.name === 'AbortError'){ /* superseded by a newer load or pause */ }
+      else onTrackFailed();
+      syncUI();
+      return false;
+    }
+  }
+  function pause(){ wantPlay = false; audio.pause(); syncUI(); }
+  function togglePlay(){ (wantPlay || !audio.paused) ? pause() : play(); }
+  function skip(dir, auto){
+    if (!tracks.length) return;
+    lastDir = dir;
+    const p = nextPos(dir, auto);
+    if (p < 0){ endOfQueue(); return; }
+    loadAt(p);
+    play();
+  }
+  function next(){ skip(1, false); }
+  function prev(){
+    if (!tracks.length) return;
+    if ((audio.currentTime || 0) > 3){ audio.currentTime = 0; return; }   /* like every player: restart first */
+    skip(-1, false);
+  }
+  function endOfQueue(){          /* repeat off, last song finished: stop, queue rewound to the start */
+    wantPlay = false; audio.pause();
+    if (shuffleOn && order.length > 1) reshuffle();
+    loadAt(0);
+    setStatus('End of queue.', 2500);
+  }
+  function onTrackFailed(){
+    const t = current();
+    if (!t || failedFile === t.file) return;
+    failedFile = t.file;
+    t.broken = true;
+    errorStreak++;
+    if (errorStreak >= tracks.length || tracks.every((x) => x.broken)){
+      wantPlay = false; audio.pause();
+      setStatus('None of the tracks could be played.', 0, true);
+      syncUI();
+      return;
+    }
+    setStatus('Can\u2019t play \u201c' + t.title + '\u201d \u2014 skipping.', 3500, true);
+    if (wantPlay) setTimeout(() => { if (wantPlay && loadedFile === failedFile) skip(lastDir, true); }, 800);
+    syncUI();
+  }
+
+  function setShuffle(on){
+    shuffleOn = !!on;
+    buildOrder(order.length ? order[pos] : 0);
+    syncUI();
+  }
+  function setRepeat(mode){
+    repeatMode = mode;
+    syncUI();
+  }
+  function cycleRepeat(){ setRepeat(repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off'); }
+
+  /* ---------- volume ----------
+     The slider is perceptual (squared) so the low end has fine control.
+     Ducking lowers it while ARIA is speaking and restores it afterwards. */
+  function applyVolume(){
+    const eff = muted ? 0 : volume * volume * (ducked ? DUCK_GAIN : 1);
+    try { audio.volume = clamp01(eff); } catch(_e){}
+    const shown = muted ? 0 : Math.round(volume * 100);
+    volEl.value = String(shown);
+    volEl.style.setProperty('--p', shown + '%');
+    btnMute.classList.toggle('muted', muted || volume === 0);
+    btnMute.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+    btnMute.title = muted ? 'Unmute' : 'Mute';
+  }
+  function setVolume(v){
+    volume = clamp01(v);
+    if (volume > 0) muted = false;
+    applyVolume();
+    try { localStorage.setItem(LS_VOLUME, String(volume)); } catch(_e){}
+  }
+  function setMuted(m){ muted = !!m; applyVolume(); }
+  function duck(on){
+    clearTimeout(duckTimer);
+    ducked = !!on && musicActive;
+    if (ducked) duckTimer = setTimeout(() => { ducked = false; applyVolume(); }, 20000);   /* failsafe if TTS never reports its end */
+    applyVolume();
+  }
+
+  /* ---------- tags (metadata) ----------
+     Browsers don't expose tags, so a few dependency-free readers pull just
+     title/artist/album out of the first bytes of the file via HTTP Range
+     requests — never the whole song. Every reader is best-effort: anything
+     unexpected returns null and the cleaned file name is used instead. */
+  async function fetchBytes(url, start, end){        /* start === null -> last `end` bytes */
+    const range = start === null ? 'bytes=-' + end : 'bytes=' + start + '-' + end;
+    const res = await fetch(url, { headers: { Range: range } });
+    if (res.status === 206) return new Uint8Array(await res.arrayBuffer());
+    if (res.status === 200 && start !== null && end < 4194304 && res.body){    /* server ignored Range: read only what we need */
+      const want = end + 1, reader = res.body.getReader(), chunks = [];
+      let got = 0;
+      while (got < want){
+        const r = await reader.read();
+        if (r.done) break;
+        chunks.push(r.value); got += r.value.length;
+      }
+      reader.cancel().catch(() => {});
+      const all = new Uint8Array(got);
+      let o = 0; for (const c of chunks){ all.set(c, o); o += c.length; }
+      return all.subarray(start, Math.min(got, want));
+    }
+    return null;
+  }
+  const synchsafe = (b, p) => ((b[p] & 0x7f) << 21) | ((b[p+1] & 0x7f) << 14) | ((b[p+2] & 0x7f) << 7) | (b[p+3] & 0x7f);
+  function decodeText(bytes, enc){
+    let s;
+    if (enc === 1){
+      if (bytes[0] === 0xFE && bytes[1] === 0xFF) s = new TextDecoder('utf-16be').decode(bytes.subarray(2));
+      else if (bytes[0] === 0xFF && bytes[1] === 0xFE) s = new TextDecoder('utf-16le').decode(bytes.subarray(2));
+      else s = new TextDecoder('utf-16le').decode(bytes);
+    } else if (enc === 2) s = new TextDecoder('utf-16be').decode(bytes);
+    else if (enc === 3) s = new TextDecoder('utf-8').decode(bytes);
+    else s = new TextDecoder('iso-8859-1').decode(bytes);
+    return s.split('\0')[0].trim();
+  }
+
+  /* MP3: ID3v2 (2.2 / 2.3 / 2.4), then ID3v1 as a fallback */
+  function parseID3(buf, ver, flags, tagSize){
+    const out = { title: '', artist: '', album: '', truncated: false };
+    if (!buf) return out;
+    const limit = Math.min(buf.length, tagSize + 10);
+    const idLen = ver === 2 ? 3 : 4, hdrLen = ver === 2 ? 6 : 10;
+    const map = ver === 2 ? { TT2: 'title', TP1: 'artist', TAL: 'album' } : { TIT2: 'title', TPE1: 'artist', TALB: 'album' };
+    let p = 10;
+    if ((flags & 0x40) && ver >= 3){                       /* extended header */
+      p += ver === 4 ? synchsafe(buf, p) : (((buf[p] << 24) | (buf[p+1] << 16) | (buf[p+2] << 8) | buf[p+3]) >>> 0) + 4;
+    }
+    while (p + hdrLen <= limit){
+      let id = String.fromCharCode(buf[p], buf[p+1], buf[p+2]);
+      if (idLen === 4) id += String.fromCharCode(buf[p+3]);
+      if (!/^[A-Z0-9]+$/.test(id)) break;                  /* reached the padding */
+      let size;
+      if (ver === 2) size = (buf[p+3] << 16) | (buf[p+4] << 8) | buf[p+5];
+      else if (ver === 4) size = synchsafe(buf, p + 4);
+      else size = ((buf[p+4] << 24) | (buf[p+5] << 16) | (buf[p+6] << 8) | buf[p+7]) >>> 0;
+      const start = p + hdrLen;
+      if (size <= 0) break;
+      if (start + size > buf.length){ out.truncated = true; break; }
+      const key = map[id];
+      if (key && !out[key]) out[key] = decodeText(buf.subarray(start + 1, start + size), buf[start]);
+      p = start + size;
+    }
+    return out;
+  }
+  async function readID3(url){
+    const first = await fetchBytes(url, 0, 262143);
+    if (!first || first.length < 10 || first[0] !== 0x49 || first[1] !== 0x44 || first[2] !== 0x33) return null;   /* "ID3" */
+    const ver = first[3], flags = first[5], tagSize = synchsafe(first, 6);
+    let out = parseID3(first, ver, flags, tagSize);
+    if (out.truncated && !out.title && tagSize + 10 > first.length){      /* big cover art sitting before the text frames */
+      out = parseID3(await fetchBytes(url, 0, Math.min(tagSize + 10, 3145728) - 1), ver, flags, tagSize);
+    }
+    return out;
+  }
+  async function readID3v1(url){
+    const b = await fetchBytes(url, null, 128);
+    if (!b || b.length < 128 || b[0] !== 0x54 || b[1] !== 0x41 || b[2] !== 0x47) return null;      /* "TAG" */
+    const f = (s, e) => new TextDecoder('iso-8859-1').decode(b.subarray(s, e)).replace(/\0[\s\S]*$/, '').trim();
+    return { title: f(3, 33), artist: f(33, 63), album: f(63, 93) };
+  }
+
+  /* M4A / MP4: moov > udta > meta > ilst */
+  function mp4Kids(buf, s, e){
+    const kids = [], dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let p = s;
+    while (p + 8 <= e){
+      const size = dv.getUint32(p);
+      if (size < 8 || p + size > e) break;
+      kids.push({ type: String.fromCharCode(buf[p+4], buf[p+5], buf[p+6], buf[p+7]), s: p + 8, e: p + size });
+      p += size;
+    }
+    return kids;
+  }
+  function parseMP4(buf){
+    const find = (list, t) => list.find((k) => k.type === t);
+    const udta = find(mp4Kids(buf, 8, buf.length), 'udta');   if (!udta) return null;
+    const meta = find(mp4Kids(buf, udta.s, udta.e), 'meta');  if (!meta) return null;
+    const ilst = find(mp4Kids(buf, meta.s + 4, meta.e), 'ilst'); if (!ilst) return null;   /* meta carries 4 bytes of version/flags */
+    const keys = { '\u00a9nam': 'title', '\u00a9ART': 'artist', 'aART': 'albumartist', '\u00a9alb': 'album' };
+    const out = { title: '', artist: '', album: '', albumartist: '' };
+    for (const item of mp4Kids(buf, ilst.s, ilst.e)){
+      const key = keys[item.type]; if (!key) continue;
+      const data = find(mp4Kids(buf, item.s, item.e), 'data'); if (!data) continue;
+      out[key] = new TextDecoder('utf-8').decode(buf.subarray(data.s + 8, data.e)).trim();   /* 8 bytes: type + locale */
+    }
+    if (!out.artist) out.artist = out.albumartist;
+    return out;
+  }
+  async function readMP4(url){
+    let off = 0;
+    for (let i = 0; i < 24; i++){                          /* walk top-level atoms until moov (may sit after a huge mdat) */
+      const h = await fetchBytes(url, off, off + 15);
+      if (!h || h.length < 8) return null;
+      const dv = new DataView(h.buffer, h.byteOffset, h.byteLength);
+      let size = dv.getUint32(0);
+      const type = String.fromCharCode(h[4], h[5], h[6], h[7]);
+      if (size === 1 && h.length >= 16) size = Number(dv.getBigUint64(8));
+      if (size < 8) return null;
+      if (type === 'moov'){
+        if (size > 3145728) return null;
+        const moov = await fetchBytes(url, off, off + size - 1);
+        return moov ? parseMP4(moov) : null;
+      }
+      off += size;
+    }
+    return null;
+  }
+
+  /* OGG (Vorbis / Opus) and FLAC: Vorbis comments */
+  function parseVorbisComments(b, p){
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const rd = () => { const n = dv.getUint32(p, true); p += 4; return n; };
+    const out = { title: '', artist: '', album: '' };
+    if (p + 4 > b.length) return null;
+    const vendorLen = rd();                                /* (not `p += rd()`: that would read p before rd() advances it) */
+    p += vendorLen;                                        /* vendor string */
+    let count = p + 4 <= b.length ? rd() : 0;
+    while (count-- > 0 && p + 4 <= b.length){
+      const n = rd();
+      if (p + n > b.length) break;
+      const s = new TextDecoder('utf-8').decode(b.subarray(p, p + n)); p += n;
+      const eq = s.indexOf('=');
+      if (eq < 1) continue;
+      const k = s.slice(0, eq).toLowerCase(), v = s.slice(eq + 1).trim();
+      if ((k === 'title' || k === 'artist' || k === 'album') && !out[k]) out[k] = v;
+    }
+    return out;
+  }
+  async function readVorbis(url){
+    const b = await fetchBytes(url, 0, 65535);
+    if (!b || b.length < 32) return null;
+    if (b[0] === 0x66 && b[1] === 0x4C && b[2] === 0x61 && b[3] === 0x43){        /* "fLaC" */
+      let q = 4;
+      while (q + 4 <= b.length){
+        const last = b[q] & 0x80, type = b[q] & 0x7f, len = (b[q+1] << 16) | (b[q+2] << 8) | b[q+3];
+        if (type === 4) return parseVorbisComments(b, q + 4);
+        q += 4 + len;
+        if (last) break;
+      }
+      return null;
+    }
+    if (b[0] !== 0x4F || b[1] !== 0x67) return null;                             /* "Og" */
+    const codes = (s) => Array.from(s, (c) => c.charCodeAt(0));
+    const find = (sig) => {
+      outer: for (let i = 0; i + sig.length <= b.length; i++){
+        for (let j = 0; j < sig.length; j++) if (b[i + j] !== sig[j]) continue outer;
+        return i + sig.length;
+      }
+      return -1;
+    };
+    let p = find(codes('OpusTags'));
+    if (p < 0) p = find([0x03].concat(codes('vorbis')));
+    return p < 0 ? null : parseVorbisComments(b, p);
+  }
+
+  async function readMeta(t){
+    const ext = ((t.file.match(/\.([^.]+)$/) || [])[1] || '').toLowerCase();
+    if (ext === 'mp3'){
+      let m = await readID3(t.url);
+      if (!m || !m.title){
+        const v1 = await readID3v1(t.url);
+        if (v1 && v1.title) m = Object.assign({}, m || {}, v1);
+      }
+      return m;
+    }
+    if (ext === 'm4a') return readMP4(t.url);
+    if (ext === 'ogg' || ext === 'oga' || ext === 'opus' || ext === 'flac') return readVorbis(t.url);
+    return null;                                           /* wav / aac: no tags worth reading */
+  }
+  async function readMetaLater(t){
+    if (t.metaState !== 'idle') return;
+    t.metaState = 'loading';
+    let m = null;
+    try { m = await readMeta(t); } catch(_e){ m = null; }
+    t.metaState = 'done';
+    if (m){
+      if (m.title) t.title = m.title;
+      if (m.artist) t.artist = m.artist;
+      if (m.album) t.album = m.album;
+    }
+    if (current() === t){ syncUI(); updateMediaSession(); }
+  }
+
+  /* ---------- lock-screen / notification controls (where supported) ---------- */
+  function updateMediaSession(){
+    if (!('mediaSession' in navigator) || !window.MediaMetadata) return;
+    try {
+      const t = current();
+      navigator.mediaSession.metadata = (musicActive && t)
+        ? new MediaMetadata({ title: t.title, artist: t.artist || 'ARIA', album: t.album || 'ARIA Music' })
+        : null;
+    } catch(_e){}
+  }
+  function bindMediaSession(on){
+    if (!('mediaSession' in navigator)) return;
+    const h = {
+      play: () => play(), pause: pause, previoustrack: prev, nexttrack: next,
+      seekto: (d) => { if (d && isFinite(d.seekTime)) audio.currentTime = d.seekTime; }
+    };
+    for (const k in h){ try { navigator.mediaSession.setActionHandler(k, on ? h[k] : null); } catch(_e){} }
+  }
+
+  /* ---------- audio level analyser (drives the orb's bars) ----------
+     Only created once audio is really allowed to run, and only wired into
+     the signal path when the context is running — routing an element through
+     a suspended context would silence it. If anything fails, the orb falls
+     back to a gentle synthetic pulse; sound is never affected. */
+  let actx = null, analyser = null, freq = null, analyserBusy = false;
+  async function ensureAnalyser(){
+    if (analyser || analyserBusy) return;
+    analyserBusy = true;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      try { await ctx.resume(); } catch(_e){}
+      if (ctx.state !== 'running'){ ctx.close().catch(() => {}); return; }
+      const src = ctx.createMediaElementSource(audio);
+      const an = ctx.createAnalyser();
+      an.fftSize = 128; an.smoothingTimeConstant = 0.7;
+      src.connect(an); an.connect(ctx.destination);
+      actx = ctx; analyser = an; freq = new Uint8Array(an.frequencyBinCount);
+    } catch(_e){ analyser = null; }
+    finally { analyserBusy = false; }
+  }
+
+  /* ---------- UI sync ---------- */
+  function setStatus(msg, ms, isErr){
+    clearTimeout(statusTimer);
+    statusMsg = msg || ''; statusErr = !!isErr;
+    if (msg && ms) statusTimer = setTimeout(() => { statusMsg = ''; statusErr = false; syncUI(); }, ms);
+  }
+  function computePhase(){
+    if (!tracks.length) return 'idle';
+    if (audio.error) return 'error';
+    if (!audio.paused && !audio.ended) return audio.readyState >= 3 ? 'playing' : 'loading';
+    return wantPlay ? 'loading' : 'paused';
+  }
+  function setText(el, txt){ if (el.textContent !== txt) el.textContent = txt; }
+
+  function syncUI(){
+    phase = computePhase();
+    const has = tracks.length > 0, t = current();
+
+    setText(countEl, has ? pad2(order[pos] + 1) + ' / ' + pad2(tracks.length) : (libState === 'scanning' ? 'SCANNING' : '00 / 00'));
+    if (t){
+      setText(titleEl, t.title); titleEl.title = t.title;
+      setText(subEl, [t.artist, t.album].filter(Boolean).join(' / ') || 'Unknown artist');
+    } else {
+      setText(titleEl, libState === 'scanning' ? 'Scanning\u2026' : 'No tracks found');
+      titleEl.title = '';
+      setText(subEl, libState === 'empty' || libState === 'idle' ? 'Copy audio files into the assets folder' : '');
+    }
+    if (statusMsg) setText(subEl, statusMsg);
+    subEl.classList.toggle('err', !!statusMsg && statusErr);
+
+    dotEl.className = 'hud-dot ' + ({ playing: 'on', loading: 'busy', error: 'bad' }[phase] || '');
+    const showPause = phase === 'playing' || (phase === 'loading' && wantPlay);
+    btnPlay.classList.toggle('is-playing', showPause);
+    btnPlay.setAttribute('aria-label', showPause ? 'Pause' : 'Play');
+    btnPlay.title = showPause ? 'Pause' : 'Play';
+    for (const b of [btnPlay, btnPrev, btnNext, btnShuffle, btnRepeat]) b.disabled = !has;
+
+    btnShuffle.classList.toggle('on', shuffleOn);
+    btnShuffle.setAttribute('aria-pressed', String(shuffleOn));
+    btnShuffle.title = 'Shuffle: ' + (shuffleOn ? 'on' : 'off');
+    btnRepeat.classList.toggle('on', repeatMode !== 'off');
+    btnRepeat.dataset.mode = repeatMode;
+    btnRepeat.setAttribute('aria-label', 'Repeat: ' + repeatMode);
+    btnRepeat.title = 'Repeat: ' + repeatMode;
+
+    visual.label = !has ? (libState === 'scanning' ? 'SCANNING' : 'NO TRACKS')
+      : ({ playing: 'NOW PLAYING', loading: 'LOADING', error: 'ERROR', paused: 'PAUSED' }[phase]);
+  }
+
+  /* cheap per-frame refresh: progress, clock text, timer chip */
+  function tickUI(){
+    const dur = isFinite(audio.duration) ? audio.duration : 0;
+    const cur = audio.currentTime || 0;
+    if (dur !== lastDur){
+      lastDur = dur;
+      seekEl.disabled = !dur;
+      const d = dur ? fmt(dur) : '00:00';
+      if (d !== lastDurTxt){ lastDurTxt = d; durEl.textContent = d; }
+    }
+    if (!seeking){
+      const frac = dur ? clamp01(cur / dur) : 0;
+      const v = String(Math.round(frac * 1000));
+      if (seekEl.value !== v){ seekEl.value = v; seekEl.style.setProperty('--p', (frac * 100).toFixed(2) + '%'); }
+      const c = fmt(cur);
+      if (c !== lastCurTxt){ lastCurTxt = c; curEl.textContent = c; }
+    }
+    /* the timer keeps running underneath — this only reflects it */
+    if (timerActive){
+      const txt = formatDuration(Math.max(0, timerEndAt - Date.now()));
+      if (timerChip.hidden) timerChip.hidden = false;
+      if (txt !== lastTimerTxt){ lastTimerTxt = txt; timerTxt.textContent = txt; }
+    } else if (!timerChip.hidden){ timerChip.hidden = true; lastTimerTxt = ''; }
+  }
+
+  /* called once per animation frame by renderOrb(): audio levels + UI */
+  function frame(phaseT){
+    const playing = phase === 'playing';
+    visual.playEase += ((playing ? 1 : 0) - visual.playEase) * 0.08;
+    if (analyser && playing) analyser.getByteFrequencyData(freq);
+    let sum = 0;
+    for (let i = 0; i < BARS; i++){
+      let target = 0;
+      if (playing){
+        if (analyser && freq){
+          const m = Math.min(i, BARS - i) / (BARS / 2);           /* mirrored left/right, low freqs at the top */
+          const idx = Math.min(freq.length - 1, Math.floor(Math.pow(m, 1.2) * freq.length * 0.6));
+          target = Math.pow(freq[idx] / 255, 1.4);
+        } else {
+          target = 0.3 + 0.25 * Math.abs(Math.sin(i * 0.5 + phaseT * 3)) + 0.1 * Math.sin(phaseT * 5);
+        }
+      }
+      levels[i] += (target - levels[i]) * 0.3;
+      sum += levels[i];
+    }
+    visual.level = sum / BARS;
+    const dur = isFinite(audio.duration) ? audio.duration : 0;
+    visual.progress = dur ? clamp01((audio.currentTime || 0) / dur) : 0;
+    if (musicActive) tickUI();
+  }
+
+  /* ---------- layout: where the orb goes so the controls fit beneath it ----------
+     Portrait: orb slides up and (only if it must) shrinks, panel underneath.
+     Wide-and-short (phone in landscape): orb left, panel right. */
+  function layout(){
+    if (!musicActive && !document.body.classList.contains('music-layout')) return;
+    const sw = stage.clientWidth, sh = stage.clientHeight;
+    if (!sw || !sh) return;
+    const gap = 10;
+    panel.style.maxHeight = Math.max(120, sh - gap * 2) + 'px';
+    const panelH = panel.offsetHeight;
+    const S = Math.min(sw, sh) * 0.82;                     /* the canvas size resizeOrb() gives the orb */
+    const stackFree = sh - panelH - gap * 2;
+    const side = stackFree < 170 && sw > sh * 1.15;
+    let T, dx = 0, dy = 0;
+    if (side){
+      const panelW = Math.min(360, sw * 0.46);
+      T = Math.max(96, Math.min(S, (sw - panelW - gap * 3) * 1.05, sh * 1.05));
+      dx = (sw - panelW - gap * 2) / 2 - sw / 2;
+    } else {
+      T = Math.max(96, Math.min(S, stackFree * 1.1));      /* the drawn orb is ~0.8 of the canvas, so this keeps it prominent */
+      dy = (6 + stackFree) / 2 - sh / 2;
+    }
+    const appR = appEl.getBoundingClientRect(), stR = stage.getBoundingClientRect();
+    const body = document.body;
+    body.classList.toggle('music-side', side);
+    body.style.setProperty('--mp-scale', (T / S).toFixed(4));
+    body.style.setProperty('--mp-dx', dx.toFixed(1) + 'px');
+    body.style.setProperty('--mp-dy', dy.toFixed(1) + 'px');
+    body.style.setProperty('--mp-tb', Math.round((appR.bottom - stR.bottom) + gap + panelH + 8) + 'px');
+  }
+  window.addEventListener('resize', layout);
+  if (window.ResizeObserver){
+    const ro = new ResizeObserver(() => layout());
+    ro.observe(panel); ro.observe(stage);
+  }
+
+  /* ---------- open / close ---------- */
+  async function open(opts){
+    opts = opts || {};
+    clearTimeout(closeTimer);
+    const wasOpen = musicActive;
+    musicActive = true;
+    document.body.classList.add('music-open', 'music-layout');
+    panel.setAttribute('aria-hidden', 'false');
+    btnMusic.classList.add('active'); btnMusic.setAttribute('aria-pressed', 'true');
+    layout();
+    if (!TRANSIENT.has(State.current)) setState('MUSIC');
+    if (!wasOpen) bindMediaSession(true);
+    await refreshLibrary();               /* rescan assets/ so songs copied in since last time appear */
+    layout();
+    panel.scrollTop = 0;
+    updateMediaSession();
+    if (opts.autoplay && musicActive) await play();
+    return tracks.length;
+  }
+  function close(){
+    if (!musicActive) return false;
+    musicActive = false;
+    wantPlay = false; audio.pause();
+    ducked = false; clearTimeout(duckTimer); applyVolume();
+    document.body.classList.remove('music-open');        /* 1) controls fade out … */
+    panel.setAttribute('aria-hidden', 'true');
+    btnMusic.classList.remove('active'); btnMusic.setAttribute('aria-pressed', 'false');
+    bindMediaSession(false);
+    try { if ('mediaSession' in navigator) navigator.mediaSession.metadata = null; } catch(_e){}
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => {                      /* 2) … then the orb morphs back */
+      document.body.classList.remove('music-layout', 'music-side');
+      if (State.current === 'MUSIC') setState(restState());
+    }, reducedMotion ? 0 : CLOSE_FADE_MS);
+    syncUI();
+    return true;
+  }
+  function toggle(){ return musicActive ? close() : open(); }
+
+  /* ---------- voice commands ---------- */
+  const trackName = () => { const t = current(); return t ? '\u201c' + t.title + '\u201d' : 'the music'; };
+  const NOT_OPEN = "The music player isn't open \u2014 say \u201copen music player\u201d first.";
+  function emptyMsg(){ return 'The music player is open, but I found no tracks. Copy audio files into the assets folder.'; }
+
+  async function voice(action, raw){
+    const text = (raw || '').toLowerCase();
+    if (action === 'MUSIC_OPEN'){
+      if (musicActive) return tracks.length ? 'The music player is already open.' : emptyMsg();
+      const n = await open();
+      return n ? 'Music player ready \u2014 ' + n + (n === 1 ? ' track.' : ' tracks.') : emptyMsg();
+    }
+    if (action === 'MUSIC_PLAY'){
+      if (!musicActive){
+        const n = await open({ autoplay: true });
+        return n ? 'Playing ' + trackName() + '.' : emptyMsg();
+      }
+      if (!tracks.length) return emptyMsg();
+      play();
+      return 'Playing ' + trackName() + '.';
+    }
+    if (action === 'MUSIC_CLOSE') return close() ? 'Music player closed.' : "The music player isn't open.";
+
+    if (!musicActive) return NOT_OPEN;
+    if (!tracks.length) return emptyMsg();
+    switch (action){
+      case 'MUSIC_PAUSE': pause(); return 'Music paused.';
+      case 'MUSIC_RESUME': play(); return 'Resuming ' + trackName() + '.';
+      case 'MUSIC_NEXT': next(); return 'Next: ' + trackName() + '.';
+      case 'MUSIC_PREV': prev(); return 'Back to ' + trackName() + '.';
+      case 'MUSIC_SHUFFLE': {
+        const off = /\b(off|disable|stop|no)\b|matikan/.test(text);
+        const on = /\b(on|enable)\b|nyalakan|aktifkan/.test(text);
+        setShuffle(off ? false : on ? true : !shuffleOn);
+        return 'Shuffle ' + (shuffleOn ? 'on.' : 'off.');
+      }
+      case 'MUSIC_REPEAT': {
+        if (/\b(off|stop|disable|no)\b|matikan/.test(text)) setRepeat('off');
+        else if (/\b(one|this|song|track|lagu)\b/.test(text)) setRepeat('one');
+        else if (/\b(all|playlist|queue|everything|semua)\b/.test(text)) setRepeat('all');
+        else cycleRepeat();
+        return 'Repeat: ' + repeatMode + '.';
+      }
+      case 'MUSIC_VOLUME': {
+        const num = text.match(/(\d{1,3})\s*(%|percent|persen)?/);
+        if (/\bunmute\b/.test(text)){ setMuted(false); return 'Unmuted.'; }
+        if (/\bmute\b/.test(text) || /\b(bisukan)\b/.test(text)){ setMuted(true); return 'Muted.'; }
+        if (num) setVolume(Math.min(100, parseInt(num[1], 10)) / 100);
+        else if (/\b(up|louder|increase|raise|higher|naikkan|besarkan|keras)\b/.test(text)) setVolume(volume + 0.15);
+        else if (/\b(down|lower|quieter|softer|decrease|reduce|turunkan|kecilkan|pelan)\b/.test(text)) setVolume(volume - 0.15);
+        else return 'Volume is at ' + Math.round(volume * 100) + '%.';
+        return 'Volume ' + Math.round(volume * 100) + '%.';
+      }
+    }
+    return '';
+  }
+
+  /* ---------- wiring ---------- */
+  btnPlay.addEventListener('click', togglePlay);
+  btnNext.addEventListener('click', next);
+  btnPrev.addEventListener('click', prev);
+  btnShuffle.addEventListener('click', () => setShuffle(!shuffleOn));
+  btnRepeat.addEventListener('click', cycleRepeat);
+  btnClose.addEventListener('click', close);
+  btnMute.addEventListener('click', () => { if (volume === 0){ setVolume(0.5); } else setMuted(!muted); });
+  volEl.addEventListener('input', () => setVolume(volEl.value / 100));
+
+  /* seek: scrub freely, commit on release (one seek, not dozens) */
+  const endSeek = () => {
+    if (!seeking) return;
+    seeking = false;
+    const dur = isFinite(audio.duration) ? audio.duration : 0;
+    if (dur) audio.currentTime = (seekEl.value / 1000) * dur;
+  };
+  seekEl.addEventListener('pointerdown', () => { seeking = true; });
+  seekEl.addEventListener('input', () => {
+    const dur = isFinite(audio.duration) ? audio.duration : 0;
+    if (!seeking) seeking = true;                          /* keyboard arrows also fire input */
+    const frac = seekEl.value / 1000;
+    seekEl.style.setProperty('--p', (frac * 100).toFixed(2) + '%');
+    curEl.textContent = fmt(frac * dur); lastCurTxt = curEl.textContent;
+  });
+  seekEl.addEventListener('change', endSeek);
+  seekEl.addEventListener('pointerup', endSeek);
+  seekEl.addEventListener('pointercancel', endSeek);
+  seekEl.addEventListener('blur', endSeek);
+
+  /* the stage owns camera pinch / swipe / double-tap-snapshot / wheel-zoom
+     gestures — taps and drags on these controls must never reach them */
+  ['touchstart', 'touchmove', 'touchend', 'wheel'].forEach((ev) => panel.addEventListener(ev, (e) => e.stopPropagation(), { passive: true }));
+
+  for (const ev of ['loadedmetadata', 'durationchange', 'canplay', 'playing', 'pause', 'waiting', 'stalled', 'emptied']){
+    audio.addEventListener(ev, syncUI);
+  }
+  audio.addEventListener('playing', () => { errorStreak = 0; if (actx && actx.state === 'suspended') actx.resume().catch(() => {}); });
+  audio.addEventListener('ended', () => {
+    if (repeatMode === 'one'){ audio.currentTime = 0; play(); return; }
+    skip(1, true);                                          /* auto-advance (or stop at the end when repeat is off) */
+  });
+  audio.addEventListener('error', () => { syncUI(); if (tracks.length) onTrackFailed(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && actx && actx.state === 'suspended') actx.resume().catch(() => {});
+  });
+
+  applyVolume();
+  syncUI();
+
+  return {
+    visual, frame, layout,
+    open, close, toggle, duck, voice,
+    owns: (el) => !!el && panel.contains(el),
+    isActive: () => musicActive
+  };
+})();
+
+/* ============================================================
    Controls wiring
    ============================================================ */
 btnMic.addEventListener('click', () => { interruptIfSpeaking(); micOn ? stopMic() : startMic(); });
 langToggleEl.addEventListener('click', () => setRecognitionLang(recognitionLang === 'id-ID' ? 'en-US' : 'id-ID'));
 updateLangUI();
 btnCam.addEventListener('click', () => { camOn ? stopCamera() : startCamera(); });
+btnMusic.addEventListener('click', () => MusicPlayer.toggle());
 btnSwitchCam.addEventListener('click', switchCamera);
 btnSnap.addEventListener('click', takeSnapshot);
 btnKeyboard.addEventListener('click', () => {
@@ -1603,8 +2820,11 @@ textForm.addEventListener('submit', (e) => {
 
 window.addEventListener('keydown', (e) => {
   if (document.activeElement === textInput) return;
+  /* Space on a focused music control does that control's own thing (press a button, nudge a slider), not mic-toggle */
+  if (e.code === 'Space' && MusicPlayer.owns(document.activeElement)) return;
   if (e.code === 'Space'){ e.preventDefault(); interruptIfSpeaking(); micOn ? stopMic() : startMic(); }
   else if (e.key === 'c'){ camOn ? stopCamera() : startCamera(); }
+  else if (e.key === 'm'){ MusicPlayer.toggle(); }
   else if (e.key === 'Escape'){ stopSpeaking(); stopMic(); }
 });
 
