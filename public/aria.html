@@ -197,11 +197,17 @@
   #banner{
     position:absolute;left:50%;top:70px;transform:translateX(-50%);
     z-index:30;max-width:min(92%,480px);
-    background:rgba(255,84,112,0.12);
-    border:1px solid rgba(255,84,112,0.45);
-    color:#ffd7dd;
+    background:rgba(var(--cyan),0.10);               /* info (default): neutral, nothing is wrong */
+    border:1px solid rgba(var(--cyan),0.40);
+    color:#d8f4ff;
     padding:10px 16px;border-radius:10px;
     font-size:13px;line-height:1.4;text-align:center;
+  }
+  #banner[data-tone="warn"]{                         /* something didn't work, ARIA is fine, here is what to do */
+    background:rgba(var(--amber),0.12);border-color:rgba(var(--amber),0.45);color:#ffe9c2;
+  }
+  #banner[data-tone="error"]{                        /* reserved for problems that need a settings change (blocked permissions) */
+    background:rgba(255,84,112,0.12);border-color:rgba(255,84,112,0.45);color:#ffd7dd;
   }
 
   /* ---------- Controls ---------- */
@@ -652,18 +658,39 @@ function setState(next, opts){
   document.body.dataset.state = next;
   lblMode.textContent = next.replace('_',' ');
   reticle.hidden = next !== 'VISION_ANALYSIS';
-  if (next === 'ERROR') showBanner(opts.message || 'Something went wrong.');
+  if (next === 'ERROR') showBanner(opts.message || 'Something went wrong.', false, 'error');
   else hideBanner();
 }
 
 let bannerTimer = null;
-function showBanner(msg, sticky){
+function showBanner(msg, sticky, tone){
   bannerEl.textContent = msg;
+  bannerEl.dataset.tone = tone || 'info';
   bannerEl.hidden = false;
   clearTimeout(bannerTimer);
-  if (!sticky) bannerTimer = setTimeout(hideBanner, 6000);
+  if (!sticky) bannerTimer = setTimeout(hideBanner, tone === 'warn' ? 8000 : 6000);
 }
 function hideBanner(){ bannerEl.hidden = true; }
+
+/* ============================================================
+   Developer diagnostics vs. what the user reads
+   One rule for the whole file: the console (logIssue) carries the technical truth — error name, message, status
+   codes — and the UI only ever gets a short, calm sentence that says what happened and what to do next.
+   Banner tones:  info = nothing is wrong,  warn = recoverable, ARIA keeps working,  error = needs a settings change.
+   Add ?debug=1 to the URL to append the technical detail to those sentences (handy on a phone with no devtools).
+   ============================================================ */
+const DEBUG_UI = /[?&]debug(=|&|$)/.test(location.search);
+function techText(err){
+  if (err == null) return '';
+  const base = (err.name && err.message) ? err.name + ': ' + err.message : (err.message || String(err));
+  return base + (err.ariaAttempts > 1 ? ' (tried ' + err.ariaAttempts + ' times)' : '');
+}
+function logIssue(area, err){
+  console.error('[ARIA] ' + area + (err != null ? ' \u2014 ' + techText(err) : ''), ...(err && typeof err === 'object' ? [err] : []));
+}
+const withDebug = (text, err) => (DEBUG_UI && err != null) ? text + ' [' + techText(err) + ']' : text;
+/* a recoverable problem: amber banner, no red state, nothing added to the conversation */
+function notifyIssue(text, err){ showBanner(withDebug(text, err), false, 'warn'); }
 
 function addTranscript(who, text){
   hintEl.style.opacity = '0';
@@ -753,20 +780,21 @@ function setAiBusy(on){ dotAi.classList.toggle('busy', !!on); }
 function aiErrorMessage(e){
   const code = e && e.code;
   const map = {
-    not_granted: "I need permission to reason out loud — allow AI access if you'd like real answers.",
-    rate_limited: "I'm a little overloaded right now — try again in a moment.",
+    not_granted: "I need permission to use AI before I can answer — allow AI access if you'd like real answers.",
+    rate_limited: "I'm a little busy right now — try again in a moment.",
     refused: "I can't help with that one.",
-    images_unavailable: "I can't examine images in this session, only hear and speak.",
-    image_rejected: "That frame didn't come through cleanly — try again.",
-    sampling_disabled: "My reasoning engine isn't available for this session.",
-    not_declared: "My reasoning engine isn't available for this session.",
-    capability_disabled: "My reasoning engine isn't available for this session.",
-    capability_removed: "My reasoning engine isn't available for this session.",
+    images_unavailable: "I can't look at images in this session, but I can still hear and speak.",
+    image_rejected: "That camera frame didn't come through cleanly — try again.",
+    sampling_disabled: "My AI service isn't available right now.",
+    not_declared: "My AI service isn't available right now.",
+    capability_disabled: "My AI service isn't available right now.",
+    capability_removed: "My AI service isn't available right now.",
     empty_completion: "I didn't come up with anything — try rephrasing.",
-    session_expired: "You'll need to sign in again for me to keep reasoning.",
-    invalid_json: "I got a malformed answer back — try again.",
+    session_expired: "You'll need to sign in again for me to keep answering.",
+    invalid_json: "I couldn't make sense of that answer — try again.",
   };
-  return map[code] || "I hit a snag reaching my reasoning engine. Try again shortly.";
+  if (!map[code]) logIssue('ai request', e);
+  return map[code] || "I couldn't reach my AI service. Try again in a moment.";
 }
 
 /* Backend proxy calls — used only when the platform "sample" capability
@@ -846,7 +874,7 @@ const AIService = {
       }
       backendCooldownUntil = Date.now() + (result.permanent ? BACKEND_RETRY_MS * 4 : BACKEND_RETRY_MS);
     }
-    return "I heard: \u201c" + userText + "\u201d. My reasoning engine isn't connected in this session, so I can only run direct commands — try camera, zoom, or snapshot.";
+    return "I heard \u201c" + userText + "\u201d, but I can't reach my AI service right now. I can still run direct commands \u2014 try camera, zoom, or snapshot.";
   },
   async analyzeImage(blob, question){
     if (aiSample && aiLimits && aiLimits.images){
@@ -869,7 +897,7 @@ const AIService = {
       }
       backendCooldownUntil = Date.now() + (result.permanent ? BACKEND_RETRY_MS * 4 : BACKEND_RETRY_MS);
     }
-    return "Vision analysis isn't available in this session — I can still hear and speak.";
+    return "I can't analyze the camera view right now \u2014 please try again in a moment. I can still hear and speak.";
   }
 };
 
@@ -1089,19 +1117,21 @@ let recognitionLang = (navigator.language || '').toLowerCase().startsWith('id') 
 function armHeardWatchdog(){
   clearTimeout(heardTimer);
   heardTimer = setTimeout(() => {
-    if (micOn) showBanner("Still listening, but nothing has come through yet — check the mic permission (site settings) and your network connection.");
+    if (micOn) showBanner("I'm not hearing anything yet \u2014 check that the mic is allowed and that you're online.", false, 'warn');
   }, 9000);
 }
 
 /* Avoids flooding the banner if the STT connection keeps failing and
    auto-restarting in a tight loop (e.g. no internet for a while). */
-function showRecErrorThrottled(msg){
+function showRecErrorThrottled(msg, err){
   const now = Date.now();
   if (now - lastRecErrorAt > 5000){
     lastRecErrorAt = now;
-    showBanner(msg);
+    notifyIssue(msg, err);
   }
 }
+const VOICE_UNSUPPORTED = "Voice input isn't supported in this browser \u2014 you can type commands instead.";
+const VOICE_UNAVAILABLE = "Voice input isn't available right now \u2014 you can type commands instead.";
 
 /* MediaRecorder's supported MIME types vary by browser — check rather
    than assume. Every candidate here is a containerized format, so
@@ -1122,8 +1152,10 @@ function pickMimeType(){
 function connectSTT(){
   const mimeType = pickMimeType();
   if (!mimeType){
-    setState('ERROR', {message:'No supported audio recording format was found in this browser.'});
+    logIssue('voice input', 'no supported audio recording format (MediaRecorder MIME type) in this browser');
     stopMic();
+    notifyIssue(VOICE_UNSUPPORTED);
+    textForm.hidden = false;                       /* recovery: the keyboard */
     return;
   }
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1133,18 +1165,23 @@ function connectSTT(){
     armHeardWatchdog();
     try {
       mediaRecorder = new MediaRecorder(micStream, { mimeType });
-    } catch(_e){
-      showRecErrorThrottled('Could not start audio recording.');
-      stopMic();
+    } catch(e){
+      logIssue('audio recorder (create)', e);
+      stopMic();                                   /* stop first: stopMic() resets the state and would hide a banner shown before it */
+      showRecErrorThrottled('Voice input had a problem \u2014 tap the mic to try again.', e);
       return;
     }
     mediaRecorder.ondataavailable = (ev) => {
       if (ev.data && ev.data.size > 0 && sttSocket && sttSocket.readyState === WebSocket.OPEN) sttSocket.send(ev.data);
     };
-    mediaRecorder.onerror = () => showRecErrorThrottled('Audio recording hit a problem.');
-    try { mediaRecorder.start(250); } catch(_e){
-      showRecErrorThrottled('Could not start audio recording.');
+    mediaRecorder.onerror = (ev) => {
+      logIssue('audio recorder', (ev && ev.error) || 'MediaRecorder error event');
+      showRecErrorThrottled('Voice input had a problem \u2014 tap the mic to try again.', ev && ev.error);
+    };
+    try { mediaRecorder.start(250); } catch(e){
+      logIssue('audio recorder (start)', e);
       stopMic();
+      showRecErrorThrottled('Voice input had a problem \u2014 tap the mic to try again.', e);
     }
   };
 
@@ -1152,8 +1189,10 @@ function connectSTT(){
     let msg;
     try { msg = JSON.parse(ev.data); } catch(_e) { return; }
     if (msg.type === 'error'){
-      showRecErrorThrottled(msg.message || 'Speech recognition hit a problem.');
-      stopMic();
+      logIssue('speech service', msg.message || 'error message without text');   /* e.g. missing key / upstream failure: for the developer */
+      stopMic();                                   /* stop first: stopMic() resets the state and would hide the banner */
+      showRecErrorThrottled(VOICE_UNAVAILABLE, msg.message);
+      textForm.hidden = false;                     /* recovery: the keyboard */
       return;
     }
     if (msg.type !== 'transcript') return;
@@ -1173,7 +1212,8 @@ function connectSTT(){
   };
 
   sttSocket.onerror = () => {
-    showRecErrorThrottled('Speech recognition needs network access to reach the recognition service.');
+    logIssue('speech socket', 'WebSocket error while connecting to /ws/stt');
+    showRecErrorThrottled("Can't reach voice recognition \u2014 check your internet connection.");
   };
 
   sttSocket.onclose = () => {
@@ -1197,7 +1237,8 @@ function updateLangUI(){
 
 async function startMic(){
   if (!sttSupported){
-    setState('ERROR', {message:"This browser doesn't support the microphone streaming needed for voice input — use the keyboard instead."});
+    logIssue('voice input', 'MediaRecorder / WebSocket not available in this browser');
+    notifyIssue(VOICE_UNSUPPORTED);
     textForm.hidden = false;
     return;
   }
@@ -1208,10 +1249,20 @@ async function startMic(){
      this is now required up front rather than best-effort. */
   try {
     micStream = await navigator.mediaDevices.getUserMedia({audio:true});
-  } catch(_e){
+  } catch(e){
     micOn = false; continuousMode = false;
-    setState('ERROR', {message:"Microphone access was denied. Allow it in the browser's site settings to talk to ARIA."});
+    logIssue('microphone', e);
     updateMicUI();
+    const n = (e && e.name) || '';
+    if (n === 'NotAllowedError' || n === 'PermissionDeniedError' || n === 'SecurityError'){
+      setState('ERROR', {message: withDebug("Microphone access is blocked. Allow it in your browser's site settings to talk to ARIA.", e)});
+    } else if (n === 'NotFoundError' || n === 'DevicesNotFoundError'){
+      notifyIssue('No microphone was found on this device.', e);
+    } else if (n === 'NotReadableError' || n === 'TrackStartError' || n === 'AbortError'){
+      notifyIssue('The microphone is busy \u2014 close other apps that might be using it and try again.', e);
+    } else {
+      notifyIssue("The microphone couldn't start. Please try again.", e);
+    }
     return;
   }
   setupAnalyser(micStream);
@@ -1361,32 +1412,24 @@ function isCameraBusyError(err){
   const n = err && err.name;
   return n === 'NotReadableError' || n === 'TrackStartError' || n === 'AbortError';
 }
-function describeCameraError(err){
-  const name = (err && err.name) || 'Error';
-  const msg = (err && err.message) ? String(err.message).trim() : '';
-  const hint = {
-    NotAllowedError: 'Camera permission is blocked \u2014 check the site and system settings.',
-    PermissionDeniedError: 'Camera permission is blocked \u2014 check the site and system settings.',
-    NotFoundError: 'No camera was found on this device.',
-    DevicesNotFoundError: 'No camera was found on this device.',
-    NotReadableError: 'The camera is in use by another app or tab, or the hardware could not start.',
-    TrackStartError: 'The camera is in use by another app or tab, or the hardware could not start.',
-    AbortError: 'The camera start was interrupted.',
-    OverconstrainedError: "This camera can't satisfy the requested settings.",
-    ConstraintNotSatisfiedError: "This camera can't satisfy the requested settings.",
-    SecurityError: 'The browser blocked camera access here (HTTPS or localhost is required).',
-    TypeError: 'The camera API is not available in this browser or context.'
-  }[name] || '';
-  let text = 'Camera error: ' + name + (msg ? ' \u2014 ' + msg : '');
-  if (hint) text += (/[.!?]$/.test(text) ? ' ' : '. ') + hint;
-  if (err && err.ariaAttempts > 1) text += ' (tried ' + err.ariaAttempts + ' times)';
-  return text;
+/* user-facing meaning of a camera failure. `blocking` = needs a settings change, so it gets the red error state;
+   everything else is a calm amber notice. (The exact error name/message goes to the console via logIssue.) */
+function cameraIssue(err){
+  const n = (err && err.name) || '';
+  if (n === 'NotAllowedError' || n === 'PermissionDeniedError') return { blocking: true, text: "Camera access is blocked. Allow it in your browser's site settings, then try again." };
+  if (n === 'SecurityError') return { blocking: true, text: 'The browser blocked the camera on this page. Open ARIA over HTTPS or localhost.' };
+  if (n === 'NotFoundError' || n === 'DevicesNotFoundError') return { text: 'No camera was found on this device.' };
+  if (n === 'NotReadableError' || n === 'TrackStartError') return { text: 'The camera is busy \u2014 another app or tab may be using it. Close it and try again.' };
+  if (n === 'AbortError') return { text: "The camera didn't start. Please try again." };
+  if (n === 'OverconstrainedError' || n === 'ConstraintNotSatisfiedError') return { text: "This camera can't start with ARIA's settings. Try switching cameras." };
+  return { text: "The camera couldn't start. Please try again." };
 }
 function reportCameraError(err, prefix){
-  console.error('[ARIA] camera error', err);
-  const text = (prefix ? prefix + ' ' : '') + describeCameraError(err);
-  setState('ERROR', { message: text });
-  addTranscript('ai', text);                      /* the banner fades after a few seconds — keep the real error in the log */
+  logIssue('camera', err);
+  const issue = cameraIssue(err);
+  const text = withDebug((prefix ? prefix + ' ' : '') + issue.text, err);
+  if (issue.blocking) setState('ERROR', { message: text });
+  else { if (State.current === 'ERROR') setState(restState()); showBanner(text, false, 'warn'); }
 }
 function releaseCameraStream(){                   /* the visible camera's stream */
   if (currentStream){ currentStream.getTracks().forEach(t => t.stop()); currentStream = null; }
@@ -1434,7 +1477,7 @@ async function startCamera(opts){
     let stream;
     try {
       stream = await openCameraStream({video:{facingMode:'environment'}}, token, (n) => {
-        showBanner('Camera is busy \u2014 retrying (' + n + '/' + CAM_BUSY_RETRIES + ')\u2026');
+        showBanner('The camera is busy \u2014 trying again\u2026');
       });
     } catch(err){
       if (token === camStartToken) reportCameraError(err, opts.errorPrefix);
@@ -1453,7 +1496,7 @@ async function startCamera(opts){
     setCamVisible(true);
     resetZoom();
     setState(restState());
-    addTranscript('ai', opts.resumedNote || 'Camera online.');
+    addTranscript('ai', 'Camera online.');
     if (opts.resumedNote) showBanner(opts.resumedNote);      /* setState() just cleared the banner: say it again so the user actually sees it */
     /* diagnostics only (no behaviour): what the browser actually delivered — useful for orientation problems */
     try {
@@ -1483,7 +1526,7 @@ async function switchCamera(){
   deviceIndex = (deviceIndex + 1) % devices.length;
   releaseCameraStream();
   const open = (index) => openCameraStream({video:{deviceId:{exact: devices[index].deviceId}}}, token, (n) => {
-    showBanner('Camera is busy \u2014 retrying (' + n + '/' + CAM_BUSY_RETRIES + ')\u2026');
+    showBanner('The camera is busy \u2014 trying again\u2026');
   });
   try {
     const stream = await open(deviceIndex);
@@ -1504,13 +1547,12 @@ async function switchCamera(){
       syncMirror();
       resetZoom();
       setState(restState());
-      const text = 'Could not switch cameras \u2014 staying on the previous one. ' + describeCameraError(err);
-      console.error('[ARIA] camera switch failed', err);
-      showBanner(text); addTranscript('ai', text);
+      logIssue('camera switch', err);
+      notifyIssue("Couldn't switch cameras \u2014 staying on the current one. " + cameraIssue(err).text, err);
     } catch(_e2){
       if (token !== camStartToken) return;
       stopCamera();
-      reportCameraError(err, 'Could not switch cameras.');
+      reportCameraError(err, "Couldn't switch cameras.");
     }
   } finally {
     if (token === camStartToken) camSwitching = false;
@@ -1547,7 +1589,7 @@ async function takeSnapshot(){
   const filename = 'aria-snapshot-' + Date.now() + '.jpg';
   if (downloadsCap){
     try { await downloadsCap.save({filename, data: blob}); addTranscript('ai', 'Snapshot saved.'); }
-    catch(_e){ addTranscript('ai', "Couldn't save the snapshot."); }
+    catch(e){ logIssue('snapshot save', e); addTranscript('ai', "I couldn't save that snapshot \u2014 please try again."); }
   } else {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1677,8 +1719,9 @@ async function setTorch(on){
     let ts;
     try {
       ts = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    } catch(_e){
-      addTranscript('ai', "Couldn't access the camera to control the flashlight.");
+    } catch(e){
+      logIssue('flashlight (camera access)', e);
+      addTranscript('ai', "I can't reach the camera for the flashlight right now \u2014 it may be in use.");
       return;
     }
     if (camOn || camStarting){ ts.getTracks().forEach(t => t.stop()); }   /* the camera UI took the camera meanwhile: never hold two streams */
@@ -1690,15 +1733,16 @@ async function setTorch(on){
     return;
   }
   if (!torchSupported()){
-    addTranscript('ai', "This device or browser doesn't support flashlight control.");
+    addTranscript('ai', "Flashlight control isn't supported on this device.");
     stopTorchStream();
     return;
   }
   try {
     await track.applyConstraints({ advanced: [{ torch: on }] });
     addTranscript('ai', on ? 'Flashlight on.' : 'Flashlight off.');
-  } catch(_e){
-    addTranscript('ai', "Couldn't control the flashlight on this device.");
+  } catch(e){
+    logIssue('flashlight', e);
+    addTranscript('ai', "I couldn't switch the flashlight just now \u2014 please try again.");
   }
   /* flashlight is off and it was running on the hidden background stream
      (not the visible camera) — release it, no reason to keep the sensor open */
@@ -1790,7 +1834,6 @@ function setHandStatus(kind){
   btnHand.classList.toggle('active', kind === 'ready');
   btnHand.setAttribute('aria-busy', String(kind === 'loading'));
 }
-const errText = (err) => (err && err.message) ? ((err.name && err.name !== 'Error' ? err.name + ': ' : '') + err.message) : String(err);
 function closeHands(inst){
   if (!inst) return;
   try { const r = inst.close(); if (r && r.catch) r.catch(() => {}); } catch(_e){}
@@ -1798,7 +1841,7 @@ function closeHands(inst){
 
 function loadScriptOnce(src){
   return new Promise((resolve, reject) => {
-    const failed = () => reject(new Error('Could not download ' + src + ' (offline, blocked, or the CDN is unreachable).'));
+    const failed = () => { const e = new Error('Could not download ' + src + ' (offline, blocked, or the CDN is unreachable).'); e.ariaKind = 'network'; reject(e); };
     const existing = document.querySelector('script[data-src="'+src+'"]');
     if (existing){
       if (existing.dataset.loaded === '1') return resolve();
@@ -1822,12 +1865,12 @@ btnHand.addEventListener('click', () => {
 
 function failHandTracking(err, token, inst){
   if (token !== handLoadToken) return;
-  console.error('[ARIA] hand tracking failed', err);
+  logIssue('hand tracking', err);
   disableHandTracking();                                      /* resets flags + label, closes handsInstance */
   closeHands(inst);
-  const reason = errText(err);
-  const text = 'Hand tracking failed: ' + reason + (/[.!?]$/.test(reason) ? ' ' : '. ') + 'Touch gestures still work.';
-  showBanner(text); addTranscript('ai', text);
+  notifyIssue((err && err.ariaKind === 'network')
+    ? "Hand tracking couldn't load \u2014 check your internet connection. Touch gestures are still available."
+    : "Hand tracking couldn't start. Touch gestures are still available.", err);
 }
 
 async function enableHandTracking(){
@@ -1839,7 +1882,7 @@ async function enableHandTracking(){
   clearTimeout(handHintTimer);
   /* informational only — nothing is aborted: the first load downloads ~12 MB, and a slow link just takes a while */
   handHintTimer = setTimeout(() => {
-    if (token === handLoadToken && handsLoading) showBanner('Hand tracking is still loading \u2014 the first load downloads about 12 MB. Tap the hand button to cancel.');
+    if (token === handLoadToken && handsLoading) showBanner('Hand tracking is still loading \u2014 the first time takes longer. Tap the hand button to cancel.');
   }, 15000);
   let hands = null;
   try {
@@ -3105,18 +3148,16 @@ function resumeAfterHiddenPage(){
   pausedByHidden = { camera: false, mic: false, hand: false };
   if (!p.camera && !p.mic) return;
   const extra = [];
-  if (p.hand) extra.push('Hand tracking was switched off \u2014 tap the hand button to turn it back on.');
-  if (p.mic) extra.push('The microphone was paused \u2014 tap the mic to resume listening.');
+  if (p.hand) extra.push('Hand tracking is off \u2014 tap the hand button to turn it back on.');
+  if (p.mic) extra.push('The microphone is off \u2014 tap the mic to listen again.');
   if (!p.camera){
-    const t = 'Paused while the page was hidden. ' + extra.join(' ');
-    showBanner(t); addTranscript('ai', t);
+    showBanner('Welcome back \u2014 the microphone was paused while you were away. Tap the mic to listen again.');
     return;
   }
-  const t = 'The camera was paused while the page was hidden \u2014 resuming it\u2026';
-  showBanner(t); addTranscript('ai', t);
+  showBanner('Welcome back \u2014 resuming the camera that was paused while you were away\u2026');
   startCamera({
-    resumedNote: 'Camera resumed (it was paused while the page was hidden). ' + extra.join(' '),
-    errorPrefix: 'The camera could not resume after the page was hidden.'
+    resumedNote: ['Camera resumed \u2014 it was paused while you were away.'].concat(extra).join(' '),
+    errorPrefix: "Couldn't resume the camera."
   });
 }
 document.addEventListener('visibilitychange', () => {
@@ -3137,7 +3178,7 @@ window.addEventListener('beforeunload', () => {
        does NOT qualify, and the browser blocks both permissions silently. */
     btnMic.disabled = true; btnCam.disabled = true;
     btnMic.title = btnCam.title = 'Needs HTTPS or localhost.';
-    showBanner("Microphone and camera are blocked here because the page isn't served over HTTPS or localhost. Run it through the local server (see README) and open it as http://localhost:<port> on the same device — not the phone's LAN IP.", true);
+    showBanner("Camera and microphone need a secure page. Open ARIA at http://localhost:<port> on this device, not the phone's network address.", true, 'warn');
     return;
   }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
