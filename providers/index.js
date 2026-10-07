@@ -4,7 +4,7 @@
  * Provider registry.
  *
  * Every provider module in this folder must export:
- *   chat(message, history) -> Promise<{ text: string }>
+ *   chat(message, history, opts?) -> Promise<{ text: string }>   (opts.system = prompt built by core/context.js)
  *   vision(imageBuffer, mimeType, question) -> Promise<{ text: string }>
  *
  * To add a new provider later (OpenAI, a local model, whatever):

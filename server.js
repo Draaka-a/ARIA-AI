@@ -9,6 +9,9 @@ const http = require('http');
 const WebSocket = require('ws');
 
 const provider = require('./providers');
+const { buildContext } = require('./core/context');
+const { handleCommand } = require('./core/commands');
+const rag = require('./core/rag');
 
 /* Providers tag thrown errors with .status when they have a real HTTP
    status (401/429/5xx from the upstream API). 0 is used internally to mean
@@ -76,7 +79,14 @@ app.post('/api/chat', async (req, res) => {
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'message is required' });
     }
-    const result = await provider.chat(message, Array.isArray(history) ? history : []);
+    /* 1) explicit memory commands ("remember…", "forget…") are deterministic
+          and never reach the LLM */
+    const handled = handleCommand(message);
+    if (handled) return res.json(handled);
+    /* 2) everything else: persona + relevant memory + relevant knowledge +
+          bounded history, assembled in one place (core/context.js) */
+    const ctx = buildContext(message, history);
+    const result = await provider.chat(ctx.message, ctx.history, { system: ctx.system });
     res.json(result);
   } catch (e) {
     /* e.status comes from the provider when the upstream API gave a real
@@ -208,6 +218,7 @@ const PORT = process.env.PORT || 8000;
 server.listen(PORT, () => {
   console.log('ARIA backend running — open http://localhost:' + PORT + '/aria.html');
   console.log('AI provider: ' + (process.env.AI_PROVIDER || 'anthropic'));
+  try { const r = rag.stats(); console.log('Knowledge: ' + r.documents + ' document(s), ' + r.chunks + ' chunk(s) [' + r.retriever + ']'); } catch (e) { console.error('Knowledge base unavailable:', e.message); }
   listTracks().then((t) => console.log('Music: ' + t.length + ' track(s) in public/assets/')).catch(() => {});
   console.log('STT provider: Deepgram' + (DEEPGRAM_API_KEY ? ' (' + DEEPGRAM_MODEL + ')' : ' — DEEPGRAM_API_KEY not set, mic will not work'));
 });

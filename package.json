@@ -5,7 +5,9 @@
   "description": "Local backend/proxy for the ARIA web assistant. Keeps the AI provider API key server-side.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "ingest": "node scripts/ingest.js",
+    "test": "node tests/unit.js"
   },
   "engines": {
     "node": ">=18"

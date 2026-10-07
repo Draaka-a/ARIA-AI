@@ -771,7 +771,11 @@ let downloadsCap = null;
   catch(_e){ downloadsCap = null; }
 })();
 
-const PERSONA = "You are ARIA, an onboard voice-and-vision assistant speaking through text-to-speech inside a browser app. Reply in 1 to 3 short spoken sentences, plain language, no markdown, no lists, no headers.";
+const PERSONA = "You are ARIA, an onboard voice-and-vision assistant whose replies are read aloud by text-to-speech. " +
+  "Be professional, calm, precise and emotionally restrained, with formal wording, no humor, no slang, no emojis, no exclamation marks. " +
+  "Reply in plain spoken prose: one or two short sentences for simple requests, never markdown or lists. " +
+  "Reply in the user's language. Do not blindly agree: if a claim is questionable, explain why and separate fact from assumption. " +
+  "Never claim to have done or accessed anything you cannot. If a request is ambiguous, ask one short clarifying question.";
 let chatHistory = [];
 function trimHistory(){ while (chatHistory.length > 12) chatHistory.shift(); }
 
@@ -962,6 +966,7 @@ const INTENTS = [
   {re:/\bzoom in\b|\bcloser look\b|\bget closer\b|\btake a closer look\b/i, action:'ZOOM_IN'},
   {re:/\bzoom out\b|\bstep back\b|\bzoom back\b/i, action:'ZOOM_OUT'},
   {re:/\b(take|grab)\b.*\b(snapshot|screenshot|photo|picture)\b|\bsnapshot\b/i, action:'SNAPSHOT'},
+  {re:/\bwhat(?:'s| is)? (?:the )?(?:current )?(?:time|date)\b(?!\s+(?:zone|complexity|series|frame|limit|format|range|travel))|\bwhat time is it\b|\bwhat(?:'s| is) today'?s date\b|\bwhat day is (?:it|today)\b|\bjam berapa\b|\bpukul berapa\b|\btanggal berapa\b|\bhari apa\b/i, action:'TIME_QUERY'},
   {re:/\bstop listening\b/i, action:'MIC_OFF'},
   {re:/\bstop speaking\b|\bbe quiet\b|\bsilence\b/i, action:'STOP_SPEAK'},
   {re:/^\s*stop\s*$/i, action:'STOP_ALL'},
@@ -1064,6 +1069,25 @@ async function runAction(action, rawText){
     case 'ZOOM_OUT': nudgeZoom(-0.3); break;
     case 'SNAPSHOT': await takeSnapshot(); break;
     case 'MIC_OFF': stopMic(); break;
+    case 'TIME_QUERY': {
+      /* answered from the device clock — the LLM has no clock and would guess */
+      const idLang = /\b(jam|pukul|tanggal|hari|berapa|sekarang)\b/i.test(rawText || '');
+      const now = new Date();
+      const wantsDate = /\b(date|day|tanggal|hari)\b/i.test(rawText || '');
+      let msg;
+      if (idLang){
+        msg = wantsDate
+          ? 'Hari ini ' + now.toLocaleDateString('id-ID', {weekday:'long', day:'numeric', month:'long', year:'numeric'}) + '.'
+          : 'Saat ini pukul ' + now.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit', hour12:false}).replace(':', '.') + '.';
+      } else {
+        msg = wantsDate
+          ? 'Today is ' + now.toLocaleDateString('en-US', {weekday:'long', day:'numeric', month:'long', year:'numeric'}) + '.'
+          : 'The current time is ' + now.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', hour12:false}) + '.';
+      }
+      addTranscript('ai', msg);
+      speak(msg);
+      break;
+    }
     case 'STOP_SPEAK': stopSpeaking(); setState(restState()); break;
     case 'STOP_ALL': stopSpeaking(); stopMic(); break;
     case 'MUSIC_OPEN': case 'MUSIC_PLAY': case 'MUSIC_CLOSE': case 'MUSIC_PAUSE': case 'MUSIC_RESUME':

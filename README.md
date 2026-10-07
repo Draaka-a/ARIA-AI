@@ -6,9 +6,8 @@ never sees the key — it only talks to `/api/chat` and `/api/vision` on the
 same origin. This is what `AIService` in `aria.html` already expects; no
 frontend changes were needed for this.
 
-Active provider: **OpenRouter**, model `google/gemma-4-31b-it:free` (free,
-supports both text and image input, so vision questions about the camera
-feed work too).
+Active provider: **OpenRouter**, default model `openrouter/free` (auto-picks a
+free model; set `OPENROUTER_MODEL` to pin one).
 
 ## File structure
 
@@ -20,6 +19,10 @@ aria-assistant/
 │   ├── index.js          picks the active provider from AI_PROVIDER
 │   ├── anthropic.js       Anthropic Messages API implementation (chat + vision)
 │   └── openrouter.js      OpenRouter implementation (chat + vision) — active by default
+├── core/                  persona, memory, RAG, context builder (see below)
+├── data/                  memory + knowledge base (memory/ and knowledge/index/ are git-ignored)
+├── scripts/ingest.js      knowledge-base CLI
+├── tests/                 unit tests + offline LLM stub
 ├── server.js              Express app: serves public/, exposes /api/health, /api/chat, /api/vision
 ├── package.json
 ├── .env.example           copy to .env and fill in your real key — never commit .env
@@ -121,3 +124,18 @@ feat: add local Express backend/proxy for ARIA's AI provider
   already built into AIService in aria.html
 - .env.example + .gitignore so the real API key never reaches git
 ```
+
+## Persona, Memory and RAG
+
+Every `/api/chat` request flows through one pipeline:
+
+```
+message -> memory commands (remember/forget/list/clear)  -> reply, no LLM
+        -> core/context.js: persona + relevant memory + relevant knowledge + last 12 turns -> provider -> LLM
+```
+
+- **Persona** — `core/persona.js` is the single source of truth for both providers. Replies are spoken-style plain prose in the user's language (Indonesian replies use formal "saya/Anda").
+- **Memory** — `data/memory/user.json`. Commands (English or Indonesian): "Remember that …", "Forget that …", "Don't remember …", "What do you remember about me?", "Clear my memory" (asks for a yes). Only what you ask is stored; credentials are refused. At most 8 relevant entries (800 chars) go into a prompt. No HTTP route exposes memory.
+- **Knowledge base (RAG)** — put `.txt` / `.md` files in `data/knowledge/documents/` (flat folder). They are indexed automatically (re-indexed only when a file changes), or run `npm run ingest -- path/to/file.md`, `npm run ingest -- --sync|--rebuild|--list`. Retrieval is keyword-based (BM25) behind a small retriever interface (`core/rag/keywordRetriever.js`); replace that file with an embedding retriever exporting the same `createRetriever(chunks)` to upgrade. At most 3 chunks / 2000 chars go into a prompt, and only when they actually match the question.
+- **Time/date** — answered on the device by `aria.html` (the LLM has no clock).
+- `npm test` runs the unit tests (no network or API key needed).

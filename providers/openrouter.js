@@ -1,13 +1,9 @@
 'use strict';
 
-/* Same persona used by the other providers, kept in sync so ARIA sounds the
-   same regardless of which AI path answered. */
-const PERSONA = "You are ARIA, an onboard voice-and-vision assistant speaking through " +
-  "text-to-speech inside a browser app. Reply in 1 to 3 short spoken sentences, plain " +
-  "language, no markdown, no lists, no headers. Output ONLY the final spoken reply — " +
-  "never show your reasoning, thinking process, or step-by-step analysis.";
-const VISION_SUFFIX = " You are looking at one live camera frame. Answer in 1-2 short " +
-  "spoken sentences. If you genuinely can't tell, say so plainly instead of guessing.";
+/* Persona now lives in core/persona.js (single source of truth). server.js
+   passes the fully built system prompt (persona + memory + knowledge) via
+   opts.system; the persona alone is the fallback for direct callers. */
+const { PERSONA, VISION_SUFFIX } = require('../core/persona');
 
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -89,10 +85,12 @@ function isConfigured(){
 /**
  * @param {string} message  the user's latest message
  * @param {Array<{role:'user'|'assistant', content:string}>} history  prior turns, no system/persona included
+ * @param {{system?: string}} [opts]  system prompt built by core/context.js
  * @returns {Promise<{text: string}>}
  */
-async function chat(message, history){
-  const messages = [{ role: 'system', content: PERSONA }]
+async function chat(message, history, opts){
+  const system = (opts && opts.system) || PERSONA;
+  const messages = [{ role: 'system', content: system }]
     .concat(history || [])
     .concat([{ role: 'user', content: message }]);
   const text = await callChatCompletions(messages);
