@@ -562,6 +562,9 @@
         <button class="ct-btn" id="btn-snap" type="button" title="Take snapshot" aria-label="Take snapshot">
           <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.4"/></svg>
         </button>
+        <button class="ct-btn" id="btn-mirror" type="button" title="Mirror: auto" aria-label="Mirror: auto">
+          <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M12 3v18M5 7l4 5-4 5M19 7l-4 5 4 5"/></svg>
+        </button>
       </div>
     </div>
     <div class="zoom-hud" id="zoom-lbl" aria-live="off">1.00&times;</div>
@@ -680,7 +683,7 @@ const btnMic = $('btn-mic'), btnCam = $('btn-cam'), btnKeyboard = $('btn-keyboar
 const btnMusic = $('btn-music');
 const langToggleEl = $('btn-lang-toggle');
 const camTools = $('cam-tools'), btnCamTools = $('btn-cam-tools');
-const btnSwitchCam = $('btn-switch-cam'), btnSnap = $('btn-snap'), btnHand = $('btn-hand');
+const btnSwitchCam = $('btn-switch-cam'), btnSnap = $('btn-snap'), btnHand = $('btn-hand'), btnMirror = $('btn-mirror');
 const gestureLbl = $('gesture-mode'), zoomLbl = $('zoom-lbl');
 const textForm = $('text-form'), textInput = $('text-input');
 
@@ -1692,6 +1695,8 @@ let nativeZoomCap = null;
    see grabFrame) deliberately stays raw and is never flipped twice.
    Only the preview is mirrored; the rear camera is left natural. */
 let camMirrored = false;
+/* mirror override: 'auto' = follow isFrontFacing(), 'on' = always mirror, 'off' = never mirror */
+let mirrorOverride = 'auto';
 
 /* 'user' -> selfie camera. Phones report it reliably; if a browser reports nothing (most desktop webcams), fall
    back to the device name. Anything still unknown is treated as NOT front-facing, i.e. today's behaviour. */
@@ -1712,9 +1717,14 @@ function renderVideoTransform(){
   camVideo.style.transform = (camMirrored ? 'scaleX(-1) ' : '') + 'scale(' + cssZoom() + ')';
 }
 function syncMirror(){
-  camMirrored = isFrontFacing(currentStream);
+  if (mirrorOverride === 'on')       camMirrored = true;
+  else if (mirrorOverride === 'off') camMirrored = false;
+  else                               camMirrored = isFrontFacing(currentStream);
   camVideo.dataset.mirrored = String(camMirrored);
   renderVideoTransform();
+  /* update button label to reflect current state */
+  if (btnMirror) btnMirror.title = btnMirror.setAttribute('aria-label',
+    'Mirror: ' + mirrorOverride) || ('Mirror: ' + mirrorOverride);
 }
 /* landmark (normalised raw-frame coords) -> overlay canvas pixel, i.e. where that point of the hand appears on
    screen. The overlay canvas is sized to the video's layout box (sizeOverlay), so canvas px == layout px. */
@@ -3204,6 +3214,12 @@ document.addEventListener('pointerdown', (e) => {         /* observe only: never
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && camTools.classList.contains('open')) setCamToolsOpen(false); });
 btnSwitchCam.addEventListener('click', switchCamera);
 btnSnap.addEventListener('click', takeSnapshot);
+btnMirror.addEventListener('click', () => {
+  /* cycle: auto -> on -> off -> auto */
+  mirrorOverride = mirrorOverride === 'auto' ? 'on' : mirrorOverride === 'on' ? 'off' : 'auto';
+  btnMirror.classList.toggle('active', mirrorOverride !== 'auto');
+  syncMirror();
+});
 btnKeyboard.addEventListener('click', () => {
   textForm.hidden = !textForm.hidden;
   if (!textForm.hidden) textInput.focus();
