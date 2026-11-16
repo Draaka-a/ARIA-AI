@@ -211,23 +211,66 @@
   }
 
   /* ---------- Controls ---------- */
-  .cam-controls{
+  /* ---------- Camera tools drawer (camera mode only) ----------
+     One small HUD toggle in the camera viewport's top-right corner; the secondary camera controls fan out
+     downward from it as compact circles. Lives inside .stage, so it can never reach the bottom controls. */
+  .cam-tools{
     position:absolute;z-index:9;
-    left:0;right:0;bottom:150px;
-    display:flex;justify-content:center;gap:10px;
-    flex-wrap:wrap;row-gap:8px;padding:0 8px;         /* "HAND TRACKING: LOADING…" is long: wrap instead of overflowing */
+    top:12px;right:calc(12px + env(safe-area-inset-right));
+    display:flex;flex-direction:column;align-items:center;gap:10px;
+    opacity:0;visibility:hidden;pointer-events:none;
+    transition:opacity .25s, visibility 0s linear .25s;
+  }
+  .cam-tools.show{opacity:1;visibility:visible;transition:opacity .25s, visibility 0s;}
+  /* the wrapper itself never catches touches (its invisible area must not block pinch/tap on the camera); only the visible buttons do */
+  .cam-tools.show .ct-toggle{pointer-events:auto;}
+  .ct-btn{
+    position:relative;width:40px;height:40px;border-radius:50%;padding:0;flex:0 0 auto;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    background:rgba(9,16,28,0.62);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    border:1px solid var(--line-strong);color:var(--ink-dim);
+    transition:background .2s, border-color .2s, color .2s, box-shadow .2s, transform .15s;
+  }
+  .ct-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;}
+  .ct-btn:active{transform:scale(0.92);}
+  .ct-btn:focus-visible{outline:1px solid var(--cyan-solid);outline-offset:2px;}
+  .ct-btn.active{background:var(--cyan-solid);border-color:var(--cyan-solid);color:#03121a;}
+  .ct-btn[aria-busy="true"]{animation:ctPulse 1s infinite;}
+  @keyframes ctPulse{50%{opacity:.45;}}
+  /* the toggle: ring + core, like a miniature ARIA orb (deliberately not a hamburger) */
+  .ct-toggle{width:38px;height:38px;color:var(--cyan-solid);}
+  .ct-toggle .ring{transform-origin:12px 12px;transition:transform .35s cubic-bezier(.22,.8,.24,1);}
+  .ct-toggle .core{transform-origin:12px 12px;transition:transform .25s, fill .2s;fill:currentColor;stroke:none;}
+  .cam-tools.open .ct-toggle{border-color:var(--cyan-solid);box-shadow:0 0 10px rgba(var(--cyan),0.35);background:rgba(79,216,255,0.16);}
+  .cam-tools.open .ct-toggle .ring{transform:rotate(135deg);}
+  .cam-tools.open .ct-toggle .core{transform:scale(1.35);}
+  /* tiny status dot on the toggle while hand tracking is loading / ready (visible with the drawer closed) */
+  .ct-toggle::after{
+    content:"";position:absolute;top:1px;right:1px;width:7px;height:7px;border-radius:50%;
+    background:var(--cyan-solid);box-shadow:0 0 6px var(--cyan-solid);opacity:0;transition:opacity .2s;
+  }
+  .ct-toggle[data-hand="ready"]::after{opacity:1;}
+  .ct-toggle[data-hand="loading"]::after{opacity:1;background:var(--amber-solid);box-shadow:0 0 6px var(--amber-solid);animation:blink 1s infinite;}
+  .ct-items{display:flex;flex-direction:column;align-items:center;gap:10px;}
+  .ct-items .ct-btn{
+    opacity:0;transform:translateY(-10px) scale(.6);visibility:hidden;pointer-events:none;
+    transition:opacity .18s, transform .22s cubic-bezier(.22,.8,.24,1), visibility 0s linear .22s,
+               background .2s, border-color .2s, color .2s;
+  }
+  .cam-tools.open .ct-items .ct-btn{opacity:1;transform:none;visibility:visible;pointer-events:auto;transition-delay:0s;}
+  .cam-tools.open .ct-items .ct-btn:nth-child(2){transition-delay:.04s;}
+  .cam-tools.open .ct-items .ct-btn:nth-child(3){transition-delay:.08s;}
+  .cam-tools.open .ct-items .ct-btn:active{transform:scale(0.92);}
+  .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+  /* temporary zoom read-out: only visible while the zoom is changing */
+  .zoom-hud{
+    position:absolute;z-index:8;top:16px;left:50%;transform:translateX(-50%);
+    font-family:"JetBrains Mono",monospace;font-size:13px;letter-spacing:.08em;color:var(--cyan-solid);
+    padding:5px 12px;border-radius:999px;background:rgba(9,16,28,0.55);border:1px solid var(--line);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);text-shadow:0 0 8px rgba(var(--cyan),0.5);
     opacity:0;pointer-events:none;transition:opacity .3s;
   }
-  .cam-controls.show{opacity:1;pointer-events:auto;}
-  .chip{
-    display:flex;align-items:center;gap:6px;
-    font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.05em;
-    padding:7px 11px;border-radius:999px;white-space:nowrap;
-    background:rgba(9,16,28,0.65);
-    border:1px solid var(--line);color:var(--ink-dim);
-    backdrop-filter:blur(6px);
-  }
-  .chip svg{width:14px;height:14px;}
+  .zoom-hud.show{opacity:1;transition:opacity .08s;}
   .icon-btn.small{width:34px;height:34px;}
 
   footer.controls{
@@ -289,9 +332,7 @@
     transform:translate(var(--mp-dx,0px),var(--mp-dy,0px)) scale(var(--mp-scale,1));
   }
   .transcript-wrap{transition:bottom .5s cubic-bezier(.22,.8,.24,1);}
-  .cam-controls{transition:opacity .3s, bottom .5s cubic-bezier(.22,.8,.24,1);}
-  body.music-layout:not(.music-side) .transcript-wrap,
-  body.music-layout:not(.music-side) .cam-controls{bottom:var(--mp-tb,150px);}
+  body.music-layout:not(.music-side) .transcript-wrap{bottom:var(--mp-tb,150px);}
   body[data-state="MUSIC"] .hud-mode{color:var(--cyan-solid);}
 
   .music-panel{
@@ -462,7 +503,8 @@
     .mp-time{min-width:34px;}
   }
   @media (prefers-reduced-motion: reduce){
-    .music-panel,#orb-canvas,.transcript-wrap,.cam-controls{transition-duration:.01ms !important;transition-delay:0s !important;}
+    .music-panel,#orb-canvas,.transcript-wrap,.cam-tools,.ct-btn,.ct-toggle .ring,.ct-toggle .core,.zoom-hud{transition-duration:.01ms !important;transition-delay:0s !important;}
+    .ct-btn[aria-busy="true"],.ct-toggle[data-hand="loading"]::after{animation:none !important;}
   }
 
   ::selection{background:rgba(79,216,255,0.3);}
@@ -504,6 +546,25 @@
 
     <div id="banner" hidden></div>
 
+    <!-- Camera tools drawer: only shown while the camera is on (see setCamVisible) -->
+    <div class="cam-tools" id="cam-tools">
+      <button class="ct-btn ct-toggle" id="btn-cam-tools" type="button" title="Camera tools" aria-label="Camera tools" aria-expanded="false" aria-controls="ct-items" data-hand="off">
+        <svg viewBox="0 0 24 24" stroke-width="1.6"><path class="ring" d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5" stroke-linecap="round"/><circle class="core" cx="12" cy="12" r="2.4"/></svg>
+      </button>
+      <div class="ct-items" id="ct-items">
+        <button class="ct-btn" id="btn-switch-cam" type="button" title="Switch camera" aria-label="Switch camera">
+          <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M4 7h4l1-2h6l1 2h4v12H4z"/><path d="M17 4l2 2-2 2" stroke-width="1.4"/><circle cx="12" cy="14" r="3.2"/></svg>
+        </button>
+        <button class="ct-btn" id="btn-hand" type="button" title="Hand tracking: off" aria-label="Hand tracking: off">
+          <svg viewBox="0 0 24 24" stroke-width="1.6"><path d="M8 13V6.5a1.5 1.5 0 0 1 3 0V12M11 12V5a1.5 1.5 0 0 1 3 0v7M14 12V6.5a1.5 1.5 0 0 1 3 0V13M17 12v2a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5v-2c0-1 .6-1.7 1.5-2"/></svg>
+          <span class="sr-only" id="gesture-mode">TOUCH</span>
+        </button>
+        <button class="ct-btn" id="btn-snap" type="button" title="Take snapshot" aria-label="Take snapshot">
+          <svg viewBox="0 0 24 24" stroke-width="1.8"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.4"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="zoom-hud" id="zoom-lbl" aria-live="off">1.00&times;</div>
     <section class="music-panel" id="music-panel" aria-label="Music player" aria-hidden="true">
       <div class="mp-head">
         <span class="hud-dot" id="mp-dot"></span>
@@ -566,22 +627,6 @@
     </div>
   </div>
 
-  <div class="cam-controls" id="cam-controls">
-    <button class="chip" id="btn-switch-cam" title="Switch camera">
-      <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M4 7h4l1-2h6l1 2h4v12H4z"/><path d="M17 4l2 2-2 2" stroke-width="1.4"/><circle cx="12" cy="14" r="3.2"/></svg>
-      SWITCH
-    </button>
-    <button class="chip" id="btn-hand" title="Toggle camera hand-tracking (experimental)">
-      <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" fill="none"><path d="M8 13V6.5a1.5 1.5 0 0 1 3 0V12M11 12V5a1.5 1.5 0 0 1 3 0v7M14 12V6.5a1.5 1.5 0 0 1 3 0V13M17 12v2a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5v-2c0-1 .6-1.7 1.5-2"/></svg>
-      <span id="gesture-mode">TOUCH</span>
-    </button>
-    <button class="chip" id="btn-snap" title="Take snapshot">
-      <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" fill="none"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.4"/></svg>
-      SNAP
-    </button>
-    <span class="chip" id="zoom-lbl">1.00x</span>
-  </div>
-
   <form id="text-form" hidden autocomplete="off">
     <input id="text-input" type="text" placeholder="Type a command or question…" />
     <button type="submit">Send</button>
@@ -634,7 +679,7 @@ const lblAiStatus = $('lbl-ai-status');
 const btnMic = $('btn-mic'), btnCam = $('btn-cam'), btnKeyboard = $('btn-keyboard');
 const btnMusic = $('btn-music');
 const langToggleEl = $('btn-lang-toggle');
-const camControls = $('cam-controls');
+const camTools = $('cam-tools'), btnCamTools = $('btn-cam-tools');
 const btnSwitchCam = $('btn-switch-cam'), btnSnap = $('btn-snap'), btnHand = $('btn-hand');
 const gestureLbl = $('gesture-mode'), zoomLbl = $('zoom-lbl');
 const textForm = $('text-form'), textInput = $('text-input');
@@ -1586,7 +1631,8 @@ function setCamVisible(on){
   camOn = on;
   camVideo.classList.toggle('visible', on);
   camOverlay.classList.toggle('visible', on);
-  camControls.classList.toggle('show', on);
+  camTools.classList.toggle('show', on);
+  if (!on) setCamToolsOpen(false);               /* closing the camera resets the drawer: reopening starts collapsed */
   btnCam.classList.toggle('active', on);
   btnCam.setAttribute('aria-pressed', String(on));
   dotCam.classList.toggle('on', on);
@@ -1685,6 +1731,7 @@ function frameToScreen(nx, ny){
 
 function resetZoom(){
   zoomLevel = 1; smoothedZoom = 1;
+  zoomLbl.classList.remove('show');
   renderVideoTransform();
   nativeZoomCap = null;
   const track = currentStream && currentStream.getVideoTracks()[0];
@@ -1705,10 +1752,18 @@ function applyZoom(target){
   } else {
     renderVideoTransform();
   }
-  updateZoomLabel();
+  updateZoomLabel(true);
 }
 function nudgeZoom(delta){ smoothedZoom = zoomLevel; applyZoom(zoomLevel + delta); }
-function updateZoomLabel(){ zoomLbl.textContent = zoomLevel.toFixed(2) + 'x'; }
+let zoomHudTimer = null;
+/* the read-out is temporary: shown only while the zoom is actually changing (pinch, wheel, voice, hand), then fades */
+function updateZoomLabel(flash){
+  zoomLbl.textContent = zoomLevel.toFixed(2) + '\u00d7';
+  if (!flash || !camOn) return;
+  zoomLbl.classList.add('show');
+  clearTimeout(zoomHudTimer);
+  zoomHudTimer = setTimeout(() => zoomLbl.classList.remove('show'), 1100);
+}
 
 /* ---- Flashlight / torch control ----
    Same getCapabilities/getSettings/applyConstraints pattern as zoom above.
@@ -1854,7 +1909,11 @@ let handLoadToken = 0, handHintTimer = null;   /* handLoadToken: bumped on every
 /* The chip shows the truth: LOADING until MediaPipe has actually processed a frame, READY only then. (initialize()
    alone is not proof: it resolves before the model file is used, so a missing/corrupt model only shows up on frame 1.) */
 function setHandStatus(kind){
-  gestureLbl.textContent = { off: 'TOUCH', loading: 'HAND TRACKING: LOADING\u2026', ready: 'HAND TRACKING: READY' }[kind];
+  const label = { off: 'TOUCH', loading: 'HAND TRACKING: LOADING\u2026', ready: 'HAND TRACKING: READY' }[kind];
+  const tip = { off: 'Hand tracking: off', loading: 'Hand tracking: loading', ready: 'Hand tracking: ready' }[kind];
+  gestureLbl.textContent = label;
+  btnHand.title = tip; btnHand.setAttribute('aria-label', tip);
+  btnCamTools.dataset.hand = kind;
   btnHand.classList.toggle('active', kind === 'ready');
   btnHand.setAttribute('aria-busy', String(kind === 'loading'));
 }
@@ -3131,6 +3190,18 @@ btnCam.addEventListener('click', () => {
   else startCamera();
 });
 btnMusic.addEventListener('click', () => MusicPlayer.toggle());
+/* camera-tools drawer: toggle, tap-outside-to-close, and keep its touches away from the stage gestures
+   (pinch / swipe-to-switch / double-tap-snapshot / long-press live on the stage) */
+function setCamToolsOpen(open){
+  camTools.classList.toggle('open', open);
+  btnCamTools.setAttribute('aria-expanded', String(open));
+}
+btnCamTools.addEventListener('click', () => setCamToolsOpen(!camTools.classList.contains('open')));
+['touchstart', 'touchmove', 'touchend', 'wheel'].forEach((ev) => camTools.addEventListener(ev, (e) => e.stopPropagation(), { passive: true }));
+document.addEventListener('pointerdown', (e) => {         /* observe only: never prevents or consumes the gesture */
+  if (camTools.classList.contains('open') && !camTools.contains(e.target)) setCamToolsOpen(false);
+}, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && camTools.classList.contains('open')) setCamToolsOpen(false); });
 btnSwitchCam.addEventListener('click', switchCamera);
 btnSnap.addEventListener('click', takeSnapshot);
 btnKeyboard.addEventListener('click', () => {
